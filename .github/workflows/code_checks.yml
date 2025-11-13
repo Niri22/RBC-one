@@ -47,6 +47,7 @@ jobs:
         run: |
           uv venv .venv
           source .venv/bin/activate
+          uv pip install "pip>=25.3"
           uv sync --all-extras --dev
           pre-commit run --all-files
 

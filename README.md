@@ -39,4 +39,4 @@ To get started with contributing to our project, please read our [CONTRIBUTING.m
 
 ## Contact Information
 
-For more information or help with navigating this repository, please contact [Vector AI ENG Team/Individual] at [Contact Email].
+For more information or help with navigating this repository, please contact Aravind Narayanan at aravind.narayanan@vectorinstitute.ai.
