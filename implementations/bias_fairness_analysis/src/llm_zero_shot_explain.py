@@ -73,7 +73,8 @@ def load_llm(
     model = (
         AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=load_dtype,  # <- use dtype (not deprecated torch_dtype)
+            # dtype=load_dtype,  # <- use dtype (not deprecated torch_dtype)
+            torch_dtype=load_dtype,
             low_cpu_mem_usage=True,
         )
         .to(device)
