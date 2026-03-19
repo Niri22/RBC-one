@@ -113,4 +113,3 @@ Pointers for the main tools and ideas used here:
 - **Activation patching in VLMs**: Neo et al., 2024 — `https://arxiv.org/abs/2401.15947`
 - **Logit lens for VLMs (MMNeuron)**: `https://arxiv.org/abs/2406.11193`
 - **VLM interpretability survey (ICLR blog, 2025)**: `https://d2jud02ci9yv69.cloudfront.net/2025-04-28-vlm-understanding-29/blog/vlm-understanding/`
-

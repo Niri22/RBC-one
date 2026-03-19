@@ -157,7 +157,7 @@ class MEP:
     verifier: Optional[MEPVerifier] = None  # Pass 2.5 — None when skipped
     timestamps: Optional[MEPTimestamps] = None
     errors: List[str] = field(default_factory=list)
-    opik_trace_id: Optional[str] = None  # set when Opik tracing is active
+    lf_trace_id: Optional[str] = None  # set when Langfuse tracing is active
 
     def to_dict(self) -> dict:
         """Return a dict representation suitable for JSON serialization."""

@@ -88,7 +88,7 @@ st.sidebar.subheader("Data Paths")
 
 mep_dir_input = st.sidebar.text_input(
     "MEP directory",
-    value="meps/openai_openai/chartqapro/test",
+    value="meps/gemini_gemini/chartqapro/test",
     help="Directory containing .json MEP files",
 )
 metrics_input = st.sidebar.text_input("metrics.jsonl", value="output/metrics.jsonl", help="Output of eval_outputs.py")

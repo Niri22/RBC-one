@@ -16,8 +16,8 @@ from typing import Optional
 
 from dotenv import load_dotenv
 
+from ..langfuse_integration.client import get_client
 from ..mep.writer import iter_meps
-from ..opik_integration.client import get_client
 from .judge import judge_mep
 
 
@@ -137,19 +137,18 @@ def evaluate_mep(
         for k, v in judge_scores.items():
             metrics[f"judge_{k}"] = v
 
-    # Log all scores back to the Opik trace if one was recorded in the MEP
-    opik_trace_id = mep.get("opik_trace_id")
-    if opik_trace_id:
+    # Log all scores back to the Langfuse trace if one was recorded in the MEP
+    lf_trace_id = mep.get("lf_trace_id")
+    if lf_trace_id:
         client = get_client()
         if client:
             score_keys = ["answer_accuracy", "latency_sec"] + (
                 [f"judge_{k}" for k in judge_scores] if use_judge else []
             )
             scores = {k: metrics[k] for k in score_keys if isinstance(metrics.get(k), (int, float))}
-            with contextlib.suppress(Exception):
-                client.log_traces_feedback_scores(
-                    [{"id": opik_trace_id, "name": k, "value": float(v)} for k, v in scores.items()]
-                )
+            for k, v in scores.items():
+                with contextlib.suppress(Exception):
+                    client.create_score(trace_id=lf_trace_id, name=k, value=float(v))
 
     return metrics
 

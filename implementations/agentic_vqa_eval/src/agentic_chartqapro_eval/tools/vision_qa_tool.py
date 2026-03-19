@@ -18,7 +18,7 @@ from google import genai
 from openai import OpenAI
 from pydantic import BaseModel, Field, PrivateAttr
 
-from ..opik_integration.tracing import close_span, open_llm_span
+from ..langfuse_integration.tracing import close_span, open_llm_span
 
 
 class VisionQAInput(BaseModel):
@@ -46,7 +46,7 @@ class VisionQATool(BaseTool):
     backend: str = "gemini"  # "openai" | "gemini"
     model: str = "gemini-2.5-flash-lite"
     api_key: str = ""
-    opik_trace: Optional[Any] = None  # Opik Trace object for span creation
+    lf_trace: Optional[Any] = None  # Langfuse Trace object for span creation
 
     # Private mutable trace storage (not a Pydantic field)
     _traces: list = PrivateAttr(default_factory=list)
@@ -100,8 +100,8 @@ class VisionQATool(BaseTool):
         start_ts = datetime.now(timezone.utc).isoformat()
         t0 = time.time()
 
-        opik_span = open_llm_span(
-            self.opik_trace,
+        lf_span = open_llm_span(
+            self.lf_trace,
             name="vision_qa_tool",
             input_data={
                 "image_path": image_path,
@@ -133,7 +133,7 @@ class VisionQATool(BaseTool):
         usage = provider_meta.get("usage", {})
 
         close_span(
-            opik_span,
+            lf_span,
             output={"raw_text": raw_text},
             usage=usage if usage else None,
             error=error_str,

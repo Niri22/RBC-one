@@ -11,7 +11,7 @@ from typing import Any, List, Optional, Tuple
 from crewai import LLM, Agent, Crew, Task
 
 from ..datasets.perceived_sample import PerceivedSample
-from ..opik_integration.tracing import close_span, open_llm_span
+from ..langfuse_integration.tracing import close_span, open_llm_span
 from ..tools.vision_qa_tool import VisionQATool
 from ..utils.json_strict import parse_strict
 
@@ -183,13 +183,13 @@ class VisionAgent:
         self.agent_api_key = agent_api_key
         self.vision_api_key = vision_api_key
 
-    def _build_tool(self, opik_trace: Any = None) -> VisionQATool:
+    def _build_tool(self, lf_trace: Any = None) -> VisionQATool:
         """
         Instantiate the vision tool with the configured vision model.
 
         Parameters
         ----------
-        opik_trace : Any, optional
+        langfuse_trace : Any, optional
             A tracing object for observability.
 
         Returns
@@ -206,14 +206,14 @@ class VisionAgent:
             backend=self.vision_backend,
             model=self.vision_model,
             api_key=key,
-            opik_trace=opik_trace,
+            lf_trace=lf_trace,
         )
 
     def run(
         self,
         sample: PerceivedSample,
         plan: dict,
-        opik_trace: Any = None,
+        lf_trace: Any = None,
         ocr_result: Optional[dict] = None,
     ) -> Tuple[str, dict, bool, str, List[dict]]:
         """
@@ -228,7 +228,7 @@ class VisionAgent:
             The question and image to analyze.
         plan : dict
             The inspection procedure to follow.
-        opik_trace : Any, optional
+        langfuse_trace : Any, optional
             Trace object for execution tracking.
         ocr_result : dict, optional
             Ground-truth OCR data for grounding.
@@ -246,12 +246,12 @@ class VisionAgent:
         tool_traces : list of dict
             A log of tool interactions during the run.
         """
-        tool = self._build_tool(opik_trace=opik_trace)
+        tool = self._build_tool(lf_trace=lf_trace)
         llm = _build_llm(self.agent_backend, self.agent_model, self.agent_api_key)
         task_description = build_vision_task_description(sample, plan, ocr_result=ocr_result)
 
         vision_span = open_llm_span(
-            opik_trace,
+            lf_trace,
             name="vision_agent",
             input_data={"task_description": task_description},
             model=self.agent_model,

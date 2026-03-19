@@ -23,8 +23,8 @@ from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
 
+from ..langfuse_integration.client import get_client
 from ..mep.writer import iter_meps
-from ..opik_integration.client import get_client
 from ..utils.json_strict import parse_strict
 
 
@@ -262,7 +262,7 @@ def main() -> None:  # noqa: PLR0915
                     row = json.loads(line)
                     accuracy_by_id[row.get("sample_id", "")] = row.get("answer_accuracy", 0.0)
 
-    opik_client = get_client()
+    lf_client = get_client()
 
     with open(args.out, "w") as f_out:
         count = 0
@@ -311,19 +311,15 @@ def main() -> None:  # noqa: PLR0915
                 f_out.write(json.dumps(row) + "\n")
                 count += 1
 
-                # Log to Opik if trace_id is available
-                opik_trace_id = mep.get("opik_trace_id")
-                if opik_client and opik_trace_id:
+                # Log to Langfuse if trace_id is available
+                lf_trace_id = mep.get("lf_trace_id")
+                if lf_client and lf_trace_id:
                     failure_type = result.get("failure_type", "other")
                     with contextlib.suppress(Exception):
-                        opik_client.log_traces_feedback_scores(
-                            [
-                                {
-                                    "id": opik_trace_id,
-                                    "name": f"failure_{failure_type}",
-                                    "value": 1.0,
-                                }
-                            ]
+                        lf_client.create_score(
+                            trace_id=lf_trace_id,
+                            name=f"failure_{failure_type}",
+                            value=1.0,
                         )
 
                 if count % 10 == 0:

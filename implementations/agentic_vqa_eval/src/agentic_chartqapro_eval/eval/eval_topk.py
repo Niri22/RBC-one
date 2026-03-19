@@ -15,6 +15,7 @@ Usage:
 
 import argparse
 import base64
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -24,6 +25,7 @@ from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
 
+from ..langfuse_integration.client import get_client
 from ..mep.writer import iter_meps
 from ..utils.json_strict import parse_strict
 from .eval_outputs import score_answer_accuracy
@@ -209,6 +211,8 @@ def main() -> None:
 
     api_key = os.environ.get("OPENAI_API_KEY", "") if args.backend == "openai" else os.environ.get("GEMINI_API_KEY", "")
 
+    lf_client = get_client()
+
     with open(args.out, "w") as f_out:
         count = 0
         for mep in iter_meps(args.mep_dir):
@@ -229,6 +233,19 @@ def main() -> None:
                 h1 = result.get("hit_at_1", 0)
                 h3 = result.get(f"hit_at_{args.k}", 0)
                 print(f"  {sid}  exp={exp!r}  candidates={cands}  hit@1={h1}  hit@{args.k}={h3}")
+
+                lf_trace_id = mep.get("lf_trace_id")
+                if lf_client and lf_trace_id:
+                    for ki in range(1, args.k + 1):
+                        key = f"hit_at_{ki}"
+                        if key in result:
+                            with contextlib.suppress(Exception):
+                                lf_client.create_score(
+                                    trace_id=lf_trace_id,
+                                    name=key,
+                                    value=float(result[key]),
+                                )
+
                 count += 1
             except Exception as exc:
                 print(f"  Error: {exc}")

@@ -11,7 +11,7 @@ from typing import Any, Optional, Tuple
 from crewai import LLM, Agent, Crew, Task
 
 from ..datasets.perceived_sample import PerceivedSample
-from ..opik_integration.tracing import close_span, open_llm_span
+from ..langfuse_integration.tracing import close_span, open_llm_span
 from ..utils.json_strict import parse_strict
 
 
@@ -137,7 +137,7 @@ class PlannerAgent:
         self.api_key = api_key
         self._llm = _build_llm(backend, model, api_key)
 
-    def run(self, sample: PerceivedSample, opik_trace: Any = None) -> Tuple[str, dict, bool, str]:
+    def run(self, sample: PerceivedSample, lf_trace: Any = None) -> Tuple[str, dict, bool, str]:
         """
         Execute the planning phase for a new question.
 
@@ -148,7 +148,7 @@ class PlannerAgent:
         ----------
         sample : PerceivedSample
             The question and context to plan for.
-        opik_trace : Any, optional
+        langfuse_trace : Any, optional
             Observability object for logging.
 
         Returns
@@ -165,7 +165,7 @@ class PlannerAgent:
         prompt = build_planner_prompt(sample)
 
         span = open_llm_span(
-            opik_trace,
+            lf_trace,
             name="planner",
             input_data={"prompt": prompt},
             model=self.model,

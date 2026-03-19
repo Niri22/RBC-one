@@ -25,6 +25,13 @@ from ..agents.verifier_agent import VerifierAgent
 from ..agents.vision_agent import VisionAgent
 from ..datasets.chartqapro_loader import load_chartqapro
 from ..datasets.perceived_sample import PerceivedSample
+from ..langfuse_integration.client import get_client
+from ..langfuse_integration.dataset import register_dataset
+from ..langfuse_integration.prompts import push_prompts
+from ..langfuse_integration.tracing import (
+    log_trace_scores,
+    sample_trace,
+)
 from ..mep.schema import (
     MEP,
     ImageRef,
@@ -37,13 +44,6 @@ from ..mep.schema import (
     MEPVision,
 )
 from ..mep.writer import write_mep
-from ..opik_integration.client import get_client
-from ..opik_integration.dataset import register_dataset
-from ..opik_integration.prompts import push_prompts
-from ..opik_integration.tracing import (
-    log_trace_scores,
-    sample_trace,
-)
 from ..tools.ocr_reader_tool import OcrReaderTool
 from ..utils.hashing import sha256_file
 from ..utils.json_strict import parse_strict
@@ -114,7 +114,7 @@ def process_sample(  # noqa: PLR0915
     config: dict,
     run_id: str,
     out_dir: str,
-    opik_client=None,
+    lf_client=None,
     verifier_agent: Optional[VerifierAgent] = None,
     ocr_tool: Optional[OcrReaderTool] = None,
 ) -> str:
@@ -138,8 +138,8 @@ def process_sample(  # noqa: PLR0915
         Unique identifier for the current evaluation run.
     out_dir : str
         Directory where the resulting MEP JSON should be saved.
-    opik_client : object, optional
-        The Opik client for tracing.
+    langfuse_client : object, optional
+        The Langfuse client for tracing and observability.
     verifier_agent : VerifierAgent, optional
         The agent for pass 2.5 verification.
     ocr_tool : OcrReaderTool, optional
@@ -155,15 +155,15 @@ def process_sample(  # noqa: PLR0915
     errors: list = []
 
     with sample_trace(
-        opik_client,
+        lf_client,
         sample_id=sample.sample_id,
         question=sample.question,
         expected_output=sample.expected_output,
         question_type=sample.question_type.value,
         config_name=config_name,
         run_id=run_id,
-    ) as opik_trace:
-        opik_trace_id = getattr(opik_trace, "id", None)
+    ) as lf_trace:
+        lf_trace_id = getattr(lf_trace, "id", None)
 
         # ---- Planner ----
         plan_prompt = ""
@@ -174,7 +174,8 @@ def process_sample(  # noqa: PLR0915
 
         try:
             with timed() as pt:
-                plan_prompt, plan_parsed, plan_parse_error, plan_raw = planner.run(sample, opik_trace=opik_trace)
+                plan_prompt, plan_parsed, plan_parse_error, plan_raw = planner.run(sample, lf_trace=lf_trace)
+
             plan_ms = pt.elapsed_ms
         except Exception as exc:
             errors.append(f"planner_error: {exc}")
@@ -192,7 +193,7 @@ def process_sample(  # noqa: PLR0915
 
         if ocr_tool is not None:
             try:
-                ocr_tool.opik_trace = opik_trace
+                ocr_tool.lf_trace = lf_trace
                 with timed() as ot:
                     ocr_raw = ocr_tool._run(sample.image_path)
                 ocr_ms = ot.elapsed_ms
@@ -225,7 +226,7 @@ def process_sample(  # noqa: PLR0915
                 ) = vision_agent.run(
                     sample,
                     plan_parsed,
-                    opik_trace=opik_trace,
+                    lf_trace=lf_trace,
                     ocr_result=ocr_parsed if ocr_parsed else None,
                 )
             vision_ms = vt.elapsed_ms
@@ -251,7 +252,8 @@ def process_sample(  # noqa: PLR0915
                         verifier_parsed,
                         verifier_parse_error,
                         verifier_raw,
-                    ) = verifier_agent.run(sample, plan_parsed, vision_parsed, opik_trace=opik_trace)
+                    ) = verifier_agent.run(sample, plan_parsed, vision_parsed, lf_trace=lf_trace)
+
                 verifier_ms = vrt.elapsed_ms
                 verifier_verdict = verifier_parsed.get("verdict", "confirmed")
             except Exception as exc:
@@ -331,20 +333,20 @@ def process_sample(  # noqa: PLR0915
                 verifier_ms=verifier_ms,
             ),
             errors=errors,
-            opik_trace_id=opik_trace_id,
+            lf_trace_id=lf_trace_id,
         )
 
-        # ---- Immediately log available scores to Opik ----
+        # ---- Immediately log available scores to Langfuse ----
         log_trace_scores(
-            opik_trace,
+            lf_trace,
             {
                 "planner_parse_ok": float(not plan_parse_error),
                 "vision_parse_ok": float(not vision_parse_error),
                 "has_errors": float(bool(errors)),
             },
         )
-        if opik_trace:
-            opik_trace.end(output=vision_parsed if vision_parsed else None)
+        if lf_trace:
+            lf_trace.update(output=vision_parsed if vision_parsed else None)
 
     return write_mep(mep, out_dir)
 
@@ -434,14 +436,14 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     print(f"Output dir       : {out_dir}")
     print(f"Workers          : {args.workers}")
 
-    # Opik: register dataset + version prompts at run start (no-ops if unavailable)
-    opik_client = get_client()
-    if opik_client:
-        print("Opik             : enabled")
+    # Langfuse: register dataset + version prompts at run start (no-ops if unavailable)
+    lf_client = get_client()
+    if lf_client:
+        print("Langfuse         : enabled")
         register_dataset(samples, split=args.split)
         push_prompts()
     else:
-        print("Opik             : not configured (set OPIK_URL_OVERRIDE to enable)")
+        print("Langfuse         : not configured (set LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY to enable)")
 
     # Build agents once — run() creates fresh Crew/Tool per call so this is thread-safe
     print("Initialising agents …")
@@ -480,7 +482,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                     config,
                     run_id,
                     out_dir,
-                    opik_client,
+                    lf_client,
                     verifier,
                     ocr,
                 )
@@ -498,7 +500,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
                     config,
                     run_id,
                     out_dir,
-                    opik_client,
+                    lf_client,
                     verifier,
                     ocr,
                 ): s

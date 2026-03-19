@@ -72,6 +72,18 @@ recent research, with fully reproducible notebooks and evaluation pipelines.
    uv run jupyter lab
    ```
 
+5. Run integration tests to validate that your API keys are set up correctly:
+
+   ```bash
+   uv run --env-file .env pytest -sv tests/test_integration.py
+   ```
+
+   > **Note:** If your `.env` file is incomplete or needs to be updated, you can re-run onboarding manually from inside your Coder workspace (from the repo root):
+   >
+   > ```bash
+   > onboard --bootcamp-name "llm-interpretability-bootcamp" --output-dir "." --test-script "./aieng-llm-interp/tests/test_integration.py" --env-example "./.env.example" --test-marker "integration_test" --force
+   > ```
+
 ## License
 
 This project is licensed under the terms of the [LICENSE](LICENSE.md) file in the root directory.

@@ -1,7 +1,7 @@
-"""Register ChartQAPro samples as an Opik Dataset.
+"""Register ChartQAPro samples as a Langfuse Dataset.
 
 Usage:
-    uv run --env-file .env -m agentic_chartqapro_eval.opik_integration.dataset \
+    python -m agentic_chartqapro_eval.langfuse_integration.dataset \
         --split test --n 25
 """
 
@@ -16,11 +16,11 @@ def register_dataset(
     samples,
     dataset_name: str = "ChartQAPro",
     split: str = "test",
-) -> Optional[object]:
+) -> Optional[str]:
     """
-    Upload a collection of samples as an Opik Dataset.
+    Upload a collection of samples as a Langfuse Dataset.
 
-    Allows for versioned dataset management and evaluation in the Opik UI.
+    Allows for versioned dataset management and evaluation in the Langfuse UI.
 
     Parameters
     ----------
@@ -33,8 +33,8 @@ def register_dataset(
 
     Returns
     -------
-    Dataset or None
-        The Opik Dataset object if successful.
+    str or None
+        The name of the created dataset if successful, else None.
     """
     client = get_client()
     if client is None:
@@ -42,23 +42,25 @@ def register_dataset(
 
     name = f"{dataset_name}_{split}"
     try:
-        dataset = client.get_or_create_dataset(name=name)
-        items = [
-            {
-                "source_id": s.sample_id,  # stored as data field; Opik auto-generates UUID v7 id
-                "question": s.question,
-                "expected_output": s.expected_output,
-                "question_type": s.question_type.value,
-                "image_path": s.image_path or "",
-                "choices": s.choices or [],
-            }
+        client.create_dataset(name=name)
+        [
+            client.create_dataset_item(
+                dataset_name=name,
+                input={
+                    "source_id": s.sample_id,  # stored as data field; Langfuse auto-generates UUID v7 id
+                    "question": s.question,
+                    "question_type": s.question_type.value,
+                    "image_path": s.image_path or "",
+                    "choices": s.choices or [],
+                },
+                expected_output=s.expected_output,
+            )
             for s in samples
         ]
-        dataset.insert(items)
-        print(f"[opik] Registered {len(items)} samples → dataset '{name}'")
-        return dataset
+        print(f"[langfuse] Registered {len(samples)} samples → dataset '{name}'")
+        return name
     except Exception as exc:
-        print(f"[opik] Dataset registration failed: {exc}")
+        print(f"[langfuse] Dataset registration failed: {exc}")
         return None
 
 
@@ -70,7 +72,7 @@ def main() -> None:
     -------
     None
     """
-    parser = argparse.ArgumentParser(description="Register ChartQAPro samples as Opik dataset")
+    parser = argparse.ArgumentParser(description="Register ChartQAPro samples as Langfuse dataset")
     parser.add_argument("--split", default="test")
     parser.add_argument("--n", type=int, default=25)
     parser.add_argument("--image_dir", default="data/chartqapro_images")
