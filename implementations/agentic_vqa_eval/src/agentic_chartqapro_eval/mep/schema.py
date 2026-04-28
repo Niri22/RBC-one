@@ -142,8 +142,9 @@ class MEP:
     """The complete Model Evaluation Packet for a single agent run.
 
     Contains all relevant information for replay and audit, including schema
-    version, run ID, configuration, sample metadata, planner output, OCR
-    output (if applicable), vision output, verifier output (if applicable),
+    version, run ID, configuration, sample metadata, planner output, 
+    OCR output (if applicable), vision output, 
+    verifier output (if applicable),
     timestamps, and any errors encountered during the run.
     """
 
