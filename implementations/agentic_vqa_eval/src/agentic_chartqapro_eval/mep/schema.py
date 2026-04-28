@@ -1,6 +1,6 @@
 """Model Evaluation Packet (MEP) schema — portable trace artifact.
 
-MEP v1 stores everything needed to replay and audit a single agent run.
+MEP v2 stores everything needed to replay and audit a single agent run.
 """
 
 import dataclasses
@@ -35,7 +35,7 @@ class MEPConfig:
 class MEPSample:
     """Metadata about the question sample.
 
-    Includes dataset, question text, and image reference.
+    Includes dataset and question text.
     """
 
     dataset: str

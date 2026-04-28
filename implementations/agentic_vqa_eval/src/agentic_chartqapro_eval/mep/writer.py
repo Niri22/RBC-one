@@ -16,7 +16,7 @@ def write_mep(mep: MEP, out_dir: str) -> str:
     return str(path)
 
 
-def read_mep(path: str) -> dict:
+def read_mep(path: str) -> dict:ß
     """Read a MEP JSON file from disk and return its content as a dict."""
     with open(path) as f:
         return json.load(f)
@@ -52,4 +52,3 @@ def close_mep(mep: MEP, end_ts: str) -> MEP:
 def validate_citation(mep: MEP) -> bool:
     """Return True if sql_generator.source_tables is non-empty. Used in eval_outputs."""
 
-    
