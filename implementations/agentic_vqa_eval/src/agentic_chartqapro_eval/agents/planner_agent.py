@@ -110,8 +110,8 @@ class PlannerAgent:
     """
     An agent responsible for deriving a logical inspection strategy.
 
-    The `PlannerAgent` processes a chart question without visual input to
-    prescribe a detailed procedure for a subsequent vision-capable agent.
+    The `PlannerAgent` processes a KPI question without generating SQL query to
+    prescribe a detailed procedure for SQL generator agent.
     """
 
     def __init__(
@@ -173,14 +173,14 @@ class PlannerAgent:
         )
 
         agent = Agent(
-            role="Chart Reading Planner",
+            role="KPI Planner",
             goal=(
-                "Produce a precise JSON inspection plan for answering a question about a chart. "
+                "Produce a precise JSON inspection plan for answering a question about KPI. "
                 "Output JSON only — no extra text."
             ),
             backstory=(
-                "You are an expert chart analyst. You plan structured chart-reading procedures "
-                "without seeing the image, so a vision agent can follow your steps precisely."
+                "You are an expert data analyst. You plan structured solve KPI procedures "
+                "only using existing defined KPI, without creating new KPI and generating SQL query, so a SQL genertor agent can follow your steps precisely."
             ),
             llm=self._llm,
             verbose=False,
