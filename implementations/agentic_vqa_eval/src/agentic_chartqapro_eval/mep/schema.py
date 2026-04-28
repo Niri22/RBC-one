@@ -8,24 +8,27 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
-@dataclass
-class ImageRef:
-    """Reference to an image used in the question, e.g. chart screenshot."""
+# @dataclass
+# class ImageRef:
+#     """Reference to an image used in the question, e.g. chart screenshot."""
 
-    path: str
-    sha256: str
+#     path: str
+#     sha256: str
+
 
 
 @dataclass
 class MEPConfig:
     """Configuration of the agent run, including backend and model choices."""
 
-    planner_backend: str  # "openai" | "gemini"
-    vision_backend: str
+    planner_backend: str
+    sql_backend: str                  # was vision_backend
     judge_backend: str
-    config_name: str  # e.g. "openai_gemini"
+    config_name: str
     planner_model: str
-    vision_model: str
+    sql_model: str                    # was vision_model
+    schema_retriever_enabled: bool = True
+    verifier_enabled: bool = True
 
 
 @dataclass
@@ -40,7 +43,7 @@ class MEPSample:
     question: str
     question_type: str
     expected_output: str
-    image_ref: ImageRef
+    # image_ref: ImageRef
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -73,36 +76,61 @@ class ToolTrace:
     elapsed_ms: float = 0.0
     provider_metadata: Dict[str, Any] = field(default_factory=dict)
 
+@dataclass
+class MEPSchemaRetriever:
+    """Schema retrieval step — replaces OCR in the adapted pipeline."""
+    kpi_name: str
+    source_tables: List[str] = field(default_factory=list)
+    source_fields: List[str] = field(default_factory=list)
+    join_keys: List[str] = field(default_factory=list)
+    data_freshness: str = ""
+    parse_error: bool = False
+    tool_trace: List[Dict] = field(default_factory=list)
+
+# @dataclass
+# class MEPVision:
+#     """The agent's vision step.
+
+#     Includes the original prompt, raw response text, and parsed vision
+#     output (e.g. answer and explanation).
+#     """
+
+#     prompt: str
+#     raw_text: str
+#     parsed: Dict[str, Any] = field(default_factory=dict)  # {answer, explanation}
+#     parse_error: bool = False
+#     tool_trace: List[Dict] = field(default_factory=list)
 
 @dataclass
-class MEPVision:
-    """The agent's vision step.
-
-    Includes the original prompt, raw response text, and parsed vision
-    output (e.g. answer and explanation).
-    """
-
+class MEPSQLGenerator:  
+    """Schema retrieval step — replaces OCR in the adapted pipeline."""        
     prompt: str
     raw_text: str
-    parsed: Dict[str, Any] = field(default_factory=dict)  # {answer, explanation}
+    sql: str = ""               # the actual SQL string — required for audit
+    parsed: Dict[str, Any] = field(default_factory=dict)
+    source_tables: List[str] = field(default_factory=list)   # required for citations
+    source_fields: List[str] = field(default_factory=list)   # required for citations
+    data_freshness: str = ""
     parse_error: bool = False
+    guardrail_triggered: bool = False    # True if SELECT * or bad join was blocked
+    fallback_used: bool = False          # True if incomplete data window hit
     tool_trace: List[Dict] = field(default_factory=list)
 
+# @dataclass
+# class MEPOcr:
+#     """The agent's OCR step.
 
-@dataclass
-class MEPOcr:
-    """The agent's OCR step.
+#     Includes the raw response text and parsed OCR output (e.g. chart type,
+#     title, axes labels, legend, data labels, annotations).
+#     """
 
-    Includes the raw response text and parsed OCR output (e.g. chart type,
-    title, axes labels, legend, data labels, annotations).
-    """
+#     raw_text: str
+#     parsed: Dict[str, Any] = field(
+#         default_factory=dict
+#     )  # {chart_type, title, x_axis, y_axis, legend, data_labels, annotations}
+#     parse_error: bool = False
+#     tool_trace: List[Dict] = field(default_factory=list)
 
-    raw_text: str
-    parsed: Dict[str, Any] = field(
-        default_factory=dict
-    )  # {chart_type, title, x_axis, y_axis, legend, data_labels, annotations}
-    parse_error: bool = False
-    tool_trace: List[Dict] = field(default_factory=list)
 
 
 @dataclass
@@ -126,16 +154,14 @@ class MEPTimestamps:
     """Timestamps for the different steps of the agent run.
 
     Includes the start and end time of the entire run, as well as the time
-    taken for each individual step (planner, OCR, vision, verifier).
+    taken for each individual step (planner, schemaretriever, sqlgenerator, verifier).
     """
-
     start: str
     end: str
     planner_ms: float = 0.0
-    ocr_ms: float = 0.0  # 0.0 when OCR step is skipped
-    vision_ms: float = 0.0
-    verifier_ms: float = 0.0
-
+    schema_retriever_ms: float = 0.0   # 0.0 when step skipped
+    sql_generator_ms: float = 0.0
+    verifier_ms: float = 0.0           # 0.0 when step skipped
 
 @dataclass
 class MEP:
@@ -148,18 +174,17 @@ class MEP:
     timestamps, and any errors encountered during the run.
     """
 
-    schema_version: str = "mep.v1"
+    schema_version: str = "mep.v2"        # bump version — breaking schema change
     run_id: str = ""
     config: Optional[MEPConfig] = None
     sample: Optional[MEPSample] = None
     plan: Optional[MEPPlan] = None
-    ocr: Optional[MEPOcr] = None  # None when OCR step is skipped
-    vision: Optional[MEPVision] = None
-    verifier: Optional[MEPVerifier] = None  # Pass 2.5 — None when skipped
+    schema_retriever: Optional[MEPSchemaRetriever] = None   # None when skipped
+    sql_generator: Optional[MEPSQLGenerator] = None
+    verifier: Optional[MEPVerifier] = None
     timestamps: Optional[MEPTimestamps] = None
     errors: List[str] = field(default_factory=list)
-    lf_trace_id: Optional[str] = None  # set when Langfuse tracing is active
+    lf_trace_id: Optional[str] = None
 
     def to_dict(self) -> dict:
-        """Return a dict representation suitable for JSON serialization."""
         return dataclasses.asdict(self)

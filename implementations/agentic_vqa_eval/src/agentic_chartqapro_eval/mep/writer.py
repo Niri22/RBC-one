@@ -29,3 +29,27 @@ def iter_meps(mep_dir: str) -> Iterator[dict]:
             yield read_mep(str(p))
         except Exception as e:
             print(f"Warning: could not read MEP {p}: {e}")
+
+def init_mep(sample: MEPSample, config: MEPConfig, run_id: str) -> MEP:
+    """Create a fresh MEP with metadata. Called at pipeline entry point."""
+
+def append_schema(mep: MEP, schema_result: MEPSchemaRetriever) -> MEP:
+    """Attach schema retriever output to MEP. Called after SchemaRetrieverTool."""
+
+def append_sql(mep: MEP, sql_result: MEPSQLGenerator) -> MEP:
+    """Attach SQL generator output. Validates source_tables is non-empty."""
+    # Should raise or set error if source_tables is empty — citation requirement
+
+def append_plan(mep: MEP, plan: MEPPlan) -> MEP:
+    """Attach planner output to MEP."""
+
+def append_verifier(mep: MEP, verifier: MEPVerifier) -> MEP:
+    """Attach verifier output. Sets verdict field."""
+
+def close_mep(mep: MEP, end_ts: str) -> MEP:
+    """Set end timestamp and compute elapsed_ms per step. Called at pipeline exit."""
+
+def validate_citation(mep: MEP) -> bool:
+    """Return True if sql_generator.source_tables is non-empty. Used in eval_outputs."""
+
+    
