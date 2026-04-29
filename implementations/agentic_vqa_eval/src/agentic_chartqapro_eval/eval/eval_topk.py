@@ -34,23 +34,26 @@ from .eval_outputs import score_answer_accuracy
 load_dotenv()
 
 _TOPK_PROMPT = """\
-You are a chart reading expert. Analyze the chart image and produce the {k} most \
-likely answers to the question, ranked from most to least likely.
+You are a SQL-based metrics assistant. A previous attempt to answer this question \
+may have been incorrect. Generate a revised SQL query and answer.
 
 Question: {question}
-{choices_block}
+Known source tables: {source_tables}
+Attempt: {attempt} of {k}
 
-Inspection plan that was used:
+Previous SQL (may be wrong):
+{previous_sql}
+
+Plan steps used:
 {plan_steps}
 
 Output ONLY JSON, no markdown:
-{{"candidates": ["<best answer>", "<2nd best>", "<3rd best>"]}}
+{{"answer": "<concise metric answer>", "sql": "<revised SQL query>"}}
 
 Rules:
-- Each candidate must be a direct, concise answer (not an explanation)
-- If the question is unanswerable, include "UNANSWERABLE" as a candidate
-- For MCQ: candidates must come from the provided choices
-- JSON only, no extra text
+- Answer must be a direct, concise metric value
+- SQL must reference only the known source tables
+- If the question is unanswerable with available data, answer "UNANSWERABLE"
 """
 
 
