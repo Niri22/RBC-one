@@ -52,7 +52,7 @@ Rules:
 - For MCQ questions: the answer must be one of the stated choices
 - If the answer is truly unanswerable based on the data and KPI definition, say exactly "UNANSWERABLE"
 - Keep answers concise — numbers, short phrases, or single words where appropriate
-- Review the draft_answer against baseline value
+- Review the answer against baseline value
 
 Output ONLY JSON, no markdown, no extra text:
 {{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence summerize the SQL query and calculation steps>"}}"""
