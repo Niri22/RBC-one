@@ -15,6 +15,15 @@ SQL_RETRIEVAL_PROMPT_PATH = Path(__file__).parent / "prompts" / "sql_retrieval.t
 # Adjust parents[5] to get from data folder
 KPI_REGISTRY_PATH = Path(__file__).parents[5] / "data" / "KPI_Registry.csv"
 
+# repo_root/data/
+DATA_FOLDER = Path(__file__).parents[5] / "data"
+
+KPI_REGISTRY_PATH = DATA_FOLDER / "KPI_Registry.csv"
+
+DATASET_PATH = DATA_FOLDER / "default of credit card clients.xls"
+
+DUCKDB_PATH = DATA_FOLDER / "credit.db"
+
 DEFAULT_TABLE_NAME = "credit_card_clients"
 
 SQL_RETRIEVAL_REQUIRED_KEYS = [
