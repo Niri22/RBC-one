@@ -31,6 +31,9 @@ from ..utils.json_strict import parse_strict
 
 VERIFIER_REQUIRED_KEYS = ["verdict", "answer", "reasoning"]
 
+# Maximum rows shown to the verifier to keep the prompt compact.
+_MAX_RESULT_ROWS = 20
+
 _VERIFIER_PROMPT = """\
 You are a critical senior data quality and QA verifier. A SQL generator agent has already attempted to answer
 the question below. Your job: look at the SQL code and result carefully and audit the work.
