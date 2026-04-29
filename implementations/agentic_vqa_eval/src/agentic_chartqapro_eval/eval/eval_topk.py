@@ -55,107 +55,87 @@ Rules:
 - SQL must reference only the known source tables
 - If the question is unanswerable with available data, answer "UNANSWERABLE"
 """
-
-
-def _encode_image(image_path: str) -> tuple:
-    ext = Path(image_path).suffix.lower().lstrip(".")
-    mime = {
-        "jpg": "jpeg",
-        "jpeg": "jpeg",
-        "png": "png",
-        "gif": "gif",
-        "webp": "webp",
-    }.get(ext, "jpeg")
-    with open(image_path, "rb") as f:
-        b64 = base64.b64encode(f.read()).decode("utf-8")
-    return b64, mime
-
-
-def _call_openai_topk(
-    image_path: str,
+def _call_llm(
     prompt: str,
-    model: str,
-    api_key: Optional[str],
+    backend: str = "anthropic",
+    model: str = "claude-sonnet-4-6",
+    api_key: Optional[str] = None,
 ) -> str:
-    client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
-    b64, mime = _encode_image(image_path)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/{mime};base64,{b64}"},
-                    },
-                ],
-            }
-        ],
-        max_completion_tokens=256,
-        temperature=0.3,  # slight temperature so candidates differ
-    )
-    return resp.choices[0].message.content or ""
+    """Call a text LLM for top-K SQL re-querying."""
+    if backend == "openai":
+        from openai import OpenAI
+        client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_completion_tokens=256,
+        )
+        return resp.choices[0].message.content or ""
+
+    if backend == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
+        resp = client.messages.create(
+            model=model,
+            max_tokens=256,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text or ""
+
+    if backend == "gemini":
+        from google import genai
+        client = genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
+        resp = client.models.generate_content(model=model, contents=prompt)
+        return resp.text or ""
+
+    raise ValueError(f"Unknown topk backend: {backend!r}")
 
 
-def _call_gemini_topk(
-    image_path: str,
-    prompt: str,
-    model: str,
-    api_key: Optional[str],
-) -> str:
-    client = genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
-    data, mime = _encode_image(image_path)
-    resp = client.models.generate_content(
-        model=model,
-        contents=[genai.types.Part.from_bytes(data=base64.b64decode(data), mime_type=f"image/{mime}"), prompt],
-        config=genai.types.GenerateContentConfig(temperature=0.3, max_output_tokens=256),
-    )
-    return resp.text or ""
 
 
 def get_topk_candidates(
     mep: dict,
     k: int = 3,
-    backend: str = "gemini",
-    model: str = "gemini-2.5-flash-lite",
+    backend: str = "anthropic",
+    model: str = "claude-sonnet-4-6",
     api_key: Optional[str] = None,
-) -> List[str]:
-    """Call the VLM and return up to k candidate answers."""
+    ) -> List[str]:
+    """Re-query the SQL generator up to k times with revised prompts.
+    Returns list of candidate answers."""
     sample = mep.get("sample", {})
-    plan = mep.get("plan", {}).get("parsed", {})
+    plan   = mep.get("plan", {}).get("parsed", {})
+    sql    = mep.get("sql_generator", {})
 
-    image_path = sample.get("image_ref", {}).get("path", "")
-    question = sample.get("question", "")
-    choices = sample.get("metadata", {}).get("choices")  # may not exist
-    plan_steps = plan.get("steps", [])
+    question    = sample.get("question", "")
+    original_sql = sql.get("sql", "")
+    plan_steps  = plan.get("steps", [])
+    source_tables = sql.get("source_tables", [])
 
-    choices_block = f"Choices: {', '.join(choices)}" if choices else ""
-    steps_text = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(plan_steps)) or "  (none)"
+    candidates = []
+    previous_sql = original_sql
 
-    prompt = _TOPK_PROMPT.format(
-        k=k,
-        question=question,
-        choices_block=choices_block,
-        plan_steps=steps_text,
-    )
+    for attempt in range(k):
+        prompt = _TOPK_PROMPT.format(
+            k=k,
+            question=question,
+            plan_steps="\n".join(f"  {i+1}. {s}" for i, s in enumerate(plan_steps)),
+            previous_sql=previous_sql,
+            attempt=attempt + 1,
+            source_tables=", ".join(source_tables) or "unknown",
+        )
+        try:
+            raw = _call_llm(prompt, backend=backend, model=model, api_key=api_key)
+            parsed, _ = parse_strict(raw, required_keys=["answer", "sql"])
+            answer = str(parsed.get("answer", "")).strip()
+            previous_sql = parsed.get("sql", previous_sql)  # use revised SQL next round
+            if answer:
+                candidates.append(answer)
+        except Exception as exc:
+            print(f"  topk attempt {attempt+1} error: {exc}")
 
-    if not image_path or not Path(image_path).exists():
-        return []
-
-    try:
-        if backend == "openai":
-            raw = _call_openai_topk(image_path, prompt, model, api_key)
-        else:
-            raw = _call_gemini_topk(image_path, prompt, model, api_key)
-
-        parsed, _ = parse_strict(raw, required_keys=["candidates"])
-        candidates = parsed.get("candidates", [])
-        return [str(c).strip() for c in candidates[:k] if c]
-    except Exception as exc:
-        print(f"  topk error for {sample.get('sample_id', '?')}: {exc}")
-        return []
+    return candidates[:k]
 
 
 def _hit_at_k(expected: str, candidates: List[str], question_type: str, k: int) -> float:
@@ -169,37 +149,36 @@ def _hit_at_k(expected: str, candidates: List[str], question_type: str, k: int) 
 def evaluate_topk(
     mep: dict,
     k: int = 3,
-    backend: str = "gemini",
-    model: str = "gemini-2.5-flash-lite",
+    backend: str = "anthropic",          # add back the missing params
+    model: str = "claude-sonnet-4-6",
     api_key: Optional[str] = None,
-) -> dict:
-    """Evaluate top-K answer candidates for a single MEP."""
-    sample = mep.get("sample", {})
-    config = mep.get("config", {})
+    ) -> dict: 
+    sample   = mep.get("sample", {})
+    config   = mep.get("config", {})
+    sql      = mep.get("sql_generator", {})      # was vision
 
-    expected = sample.get("expected_output", "")
+    expected      = sample.get("expected_output", "")
     question_type = sample.get("question_type", "standard")
-
-    # Top-1 answer from the original MEP (already computed, no extra call)
-    original_answer = mep.get("vision", {}).get("parsed", {}).get("answer", "")
+    original_answer = (mep.get("verifier", {}) or {}).get("parsed", {}).get("answer") \
+                      or sql.get("parsed", {}).get("answer", "")   # prefer verified answer
 
     candidates = get_topk_candidates(mep, k=k, backend=backend, model=model, api_key=api_key)
 
-    result: dict = {
-        "sample_id": sample.get("sample_id", ""),
-        "question_type": question_type,
-        "config_name": config.get("config_name", ""),
-        "expected": expected,
-        "original_answer": original_answer,
-        "topk_candidates": candidates,
+    result = {
+        "sample_id":         sample.get("sample_id", ""),
+        "question_type":     question_type,
+        "config_name":       config.get("config_name", ""),
+        "expected":          expected,
+        "original_answer":   original_answer,
+        "topk_candidates":   candidates,
         "original_accuracy": score_answer_accuracy(expected, original_answer, question_type),
+        "citation_present":  len(sql.get("source_tables", [])) > 0,  # carry forward
     }
 
     for ki in range(1, k + 1):
         result[f"hit_at_{ki}"] = _hit_at_k(expected, candidates, question_type, ki)
 
     return result
-
 
 def main() -> None:
     """Run top-K evaluation on MEPs and write results to JSONL."""
