@@ -1,0 +1,7 @@
+KPI Name,Description,Key Fields,Metric Type,version,Logic
+Client Count,Total number of clients in dataset,ID,Point-in-time,v1,COUNT(DISTINCT ID)
+Default Rate,Percentage of clients who default next month,default_payment_next_month,Point-in-time,v1,AVG(default_payment_next_month)
+Avg Credit Limit,Average approved credit limit,LIMIT_BAL,Point-in-time,v1,AVG(LIMIT_BAL)
+Repeat Delinquency Rate,Percentage of clients delinquent in 2+ Months across 6 months,"PAY_0, PAY_2, PAY_3, PAY_4, PAY_5, PAY_6",Period-aggregated,v1,COUNT MONTHS WHERE PAY_X >=2; FLAG IF COUNT >=2
+Avg Payment Amount 6M,Average payment amount across Apr-Sep 2005,"PAY_AMT1, PAY_AMT2, PAY_AMT3, PAY_AMT4, PAY_AMT5, PAY_AMT6",Period-aggregated,v1,AVERAGE OF 6 PAYMENT AMOUNT FIELDS
+Recent Payment-to-Bill Ratio,Average recent payment divided by recent bill amount,"PAY_AMT1, BILL_AMT1",Period-aggregated,v1,PAY_AMT1/BILL_AMT1 WHERE BILL AMOUNT>0
