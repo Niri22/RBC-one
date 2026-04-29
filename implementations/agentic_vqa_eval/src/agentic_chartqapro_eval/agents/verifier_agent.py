@@ -1,17 +1,17 @@
-"""VerifierAgent — Pass 2.5: critically reviews the VisionAgent's draft answer.
+"""VerifierAgent — Pass 2.5: critically reviews the SQLGeneratorAgent's draft answer.
 
-The verifier sees the chart image AND the draft answer/explanation and decides
+The verifier sees the SQL code AND the draft answer/explanation and decides
 whether to CONFIRM or REVISE the answer. This teaches multi-agent critique patterns.
 
-Unlike VisionAgent (which uses CrewAI + tool-use to explore the chart), the
+Unlike SQLGeneratorAgent (which uses CrewAI + tool-use to explore the chart), the
 verifier makes a single direct VLM call — showing that multi-agent critique
 does not always require a full orchestration framework.
 
 Key teaching point
 ------------------
-Two agents looking at the same chart image can disagree. When the second model
+Two agents looking at the plan and data can disagree. When the second model
 (the verifier) has explicit access to the first model's reasoning, it can catch
-errors the first model missed — axis misreads, arithmetic mistakes, etc.
+errors the first model missed — KPI misread, SQL logic mistakes, etc.
 """
 
 import base64
@@ -39,8 +39,8 @@ Question Type    : {question_type}
 Inspection plan the agent was supposed to follow:
 {plan_steps}
 
-Vision Agent's Draft Answer     : {draft_answer}
-Vision Agent's Draft Explanation: {draft_explanation}
+SQLGeneratorAgent's Draft SQL     : {sql}
+SQLGeneratorAgent's Draft Answer: {answer}
 
 Examine the SQL code. Then decide:
   CONFIRM — the draft answer is correct (output the same answer unchanged)
