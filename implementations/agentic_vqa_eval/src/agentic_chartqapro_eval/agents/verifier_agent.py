@@ -1,17 +1,17 @@
-"""VerifierAgent — Pass 2.5: critically reviews the VisionAgent's draft answer.
+"""VerifierAgent — Pass 2.5: critically reviews the SQLGeneratorAgent's draft answer.
 
-The verifier sees the chart image AND the draft answer/explanation and decides
+The verifier sees the SQL code AND the draft answer/explanation and decides
 whether to CONFIRM or REVISE the answer. This teaches multi-agent critique patterns.
 
-Unlike VisionAgent (which uses CrewAI + tool-use to explore the chart), the
+Unlike SQLGeneratorAgent (which uses CrewAI + tool-use to explore the chart), the
 verifier makes a single direct VLM call — showing that multi-agent critique
 does not always require a full orchestration framework.
 
 Key teaching point
 ------------------
-Two agents looking at the same chart image can disagree. When the second model
+Two agents looking at the plan and data can disagree. When the second model
 (the verifier) has explicit access to the first model's reasoning, it can catch
-errors the first model missed — axis misreads, arithmetic mistakes, etc.
+errors the first model missed — KPI misread, SQL logic mistakes, etc.
 """
 
 import base64
@@ -30,8 +30,8 @@ from ..utils.json_strict import parse_strict
 VERIFIER_REQUIRED_KEYS = ["verdict", "answer", "reasoning"]
 
 _VERIFIER_PROMPT = """\
-You are a critical chart QA verifier. A vision agent has already attempted to answer
-the question below. Your job: look at the chart image carefully and audit the work.
+You are a critical senior data quality and QA verifier. A SQL generator agent has already attempted to answer
+the question below. Your job: look at the SQL code and result carefully and audit the work.
 
 Question         : {question}
 Question Type    : {question_type}
@@ -39,22 +39,23 @@ Question Type    : {question_type}
 Inspection plan the agent was supposed to follow:
 {plan_steps}
 
-Vision Agent's Draft Answer     : {draft_answer}
-Vision Agent's Draft Explanation: {draft_explanation}
+SQLGeneratorAgent's Draft SQL     : {sql}
+SQLGeneratorAgent's Draft Answer: {answer}
 
-Examine the chart image. Then decide:
+Examine the SQL code. Then decide:
   CONFIRM — the draft answer is correct (output the same answer unchanged)
   REVISE  — you can see a clear, specific error; output the corrected answer
 
 Rules:
-- Only REVISE when you are confident you can point to a concrete error in the chart
-- If uncertain, CONFIRM — do not second-guess without visual evidence
+- Only REVISE when you are confident you can point to a concrete error in the code
+- If uncertain, CONFIRM — do not second-guess without confirming KPI definition 
 - For MCQ questions: the answer must be one of the stated choices
-- If the answer is truly unanswerable from the chart, say exactly "UNANSWERABLE"
+- If the answer is truly unanswerable based on the data and KPI definition, say exactly "UNANSWERABLE"
 - Keep answers concise — numbers, short phrases, or single words where appropriate
+- Review the draft_answer against baseline value
 
 Output ONLY JSON, no markdown, no extra text:
-{{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence grounded in what you see in the chart>"}}"""
+{{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence summerize the SQL query and calculation steps>"}}"""
 
 
 # ---------------------------------------------------------------------------
@@ -170,10 +171,10 @@ def _call_vlm_gemini(prompt: str, image_path: str, model: str, api_key: Optional
 
 class VerifierAgent:
     """
-    A validation agent that critiques draft answers against visual evidence.
+    A validation agent that critiques draft answers against SQL logic.
 
-    Coordinates a critical second look at the chart image to verify the
-    logical grounding of the initial answer proposed by the VisionAgent.
+    Coordinates a critical second look at the plan steps and SQL query to verify the
+    logical grounding of the initial answer proposed by the SQLGeneratorAgent.
     """
 
     def __init__(
