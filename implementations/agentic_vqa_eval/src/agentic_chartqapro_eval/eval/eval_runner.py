@@ -263,53 +263,152 @@ def run_sample(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="RBC Metrics Eval Runner")
-    parser.add_argument("--samples",    required=True,  help="Path to eval_samples.json")
-    parser.add_argument("--mep_dir",    required=True,  help="Directory to write MEP JSON files")
-    parser.add_argument("--db_uri",     required=True,  help="SQLAlchemy DB URI for NL2SQLTool")
-    parser.add_argument("--backend",    default="anthropic", choices=["openai", "gemini", "anthropic"])
-    parser.add_argument("--model",      default="claude-sonnet-4-6")
-    parser.add_argument("--config_name", default="anthropic_claude")
-    parser.add_argument("--no_schema",  action="store_true", help="Skip SchemaRetrieverTool")
-    parser.add_argument("--no_verify",  action="store_true", help="Skip VerifierAgent")
-    parser.add_argument("--n",          type=int, default=None, help="Limit to first N samples")
+
+    # ── Input / output ────────────────────────────────────────────────────
+    parser.add_argument(
+        "--samples",
+        default="eval_samples.json",
+        help="Path to eval_samples.json",
+    )
+    parser.add_argument(
+        "--mep_dir",
+        required=True,
+        help="Directory to write MEP JSON files",
+    )
+
+    # ── Database ──────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--csv",
+        default=None,
+        help="Path to UCI credit card CSV — loads into SQLite if provided",
+    )
+    parser.add_argument(
+        "--db_uri",
+        default=None,
+        help="SQLAlchemy DB URI — used directly if --csv is not provided "
+             "(e.g. sqlite:///rbc_metrics.db)",
+    )
+    parser.add_argument(
+        "--db_path",
+        default="rbc_metrics.db",
+        help="SQLite file path when --csv is used (default: rbc_metrics.db)",
+    )
+
+    # ── Backend ───────────────────────────────────────────────────────────
+    parser.add_argument(
+        "--backend",
+        default="anthropic",
+        choices=["openai", "gemini", "anthropic"],
+        help="LLM backend for all agents",
+    )
+    parser.add_argument(
+        "--model",
+        default="claude-sonnet-4-6",
+        help="Model name for the chosen backend",
+    )
+    parser.add_argument(
+        "--config_name",
+        default=None,
+        help="Human-readable config label written into MEP "
+             "(defaults to '<backend>_<model>')",
+    )
+
+    # ── Pipeline toggles ──────────────────────────────────────────────────
+    parser.add_argument(
+        "--no_schema",
+        action="store_true",
+        help="Skip SchemaRetrieverTool step",
+    )
+    parser.add_argument(
+        "--no_verify",
+        action="store_true",
+        help="Skip VerifierAgent step",
+    )
+
+    # ── Run controls ──────────────────────────────────────────────────────
+    parser.add_argument(
+        "--n",
+        type=int,
+        default=None,
+        help="Limit to first N samples (default: run all)",
+    )
+
     args = parser.parse_args()
 
-    # ── Shared resources — init once ──────────────────────────────────────
-    run_id = str(uuid.uuid4())[:8]
-    config = _make_config(args.backend, args.model, args.config_name)
+    # ── Validate DB args ──────────────────────────────────────────────────
+    if not args.csv and not args.db_uri:
+        parser.error("One of --csv or --db_uri is required.")
+
+    # ── DB setup — must run before agents are initialised ─────────────────
+    if args.csv:
+        db_uri = setup_db(args.csv, db_path=args.db_path)
+    else:
+        db_uri = args.db_uri
+
+    # ── Run metadata ──────────────────────────────────────────────────────
+    run_id      = str(uuid.uuid4())[:8]
+    config_name = args.config_name or f"{args.backend}_{args.model}"
+    config      = _make_config(
+        backend=args.backend,
+        model=args.model,
+        config_name=config_name,
+    )
     config.schema_retriever_enabled = not args.no_schema
-    config.verifier_enabled = not args.no_verify
+    config.verifier_enabled         = not args.no_verify
 
-    print(f"Run ID     : {run_id}")
-    print(f"Backend    : {args.backend} / {args.model}")
-    print(f"Schema step: {'enabled' if config.schema_retriever_enabled else 'SKIPPED'}")
-    print(f"Verifier   : {'enabled' if config.verifier_enabled else 'SKIPPED'}")
+    print(f"{'='*52}")
+    print(f"  RBC Metrics Eval Runner")
+    print(f"{'='*52}")
+    print(f"  Run ID      : {run_id}")
+    print(f"  Backend     : {args.backend} / {args.model}")
+    print(f"  Config name : {config_name}")
+    print(f"  DB URI      : {db_uri}")
+    print(f"  MEP dir     : {args.mep_dir}")
+    print(f"  Schema step : {'enabled' if config.schema_retriever_enabled else 'SKIPPED (--no_schema)'}")
+    print(f"  Verifier    : {'enabled' if config.verifier_enabled else 'SKIPPED (--no_verify)'}")
+    print(f"{'='*52}\n")
 
-    # Instantiate once — see SQLGeneratorAgent note on connection reuse
-    planner        = PlannerAgent(backend=args.backend, model=args.model)
-    schema_retriever = SchemaRetrieverTool(db_uri=args.db_uri)
-    sql_generator  = SQLGeneratorAgent(db_uri=args.db_uri, backend=args.backend, model=args.model)
-    verifier       = VerifierAgent(backend=args.backend, model=args.model)
-    lf_client      = get_client()
+    # ── Agents — instantiate once, reuse across all samples ───────────────
+    print("Initialising agents...")
+    planner          = PlannerAgent(backend=args.backend, model=args.model)
+    schema_retriever = SchemaRetrieverTool(db_uri=db_uri)
+    sql_generator    = SQLGeneratorAgent(
+        db_uri=db_uri,
+        backend=args.backend,
+        model=args.model,
+    )
+    verifier         = VerifierAgent(backend=args.backend, model=args.model)
+    lf_client        = get_client()
+
+    if lf_client:
+        print("Langfuse        : enabled")
+    else:
+        print("Langfuse        : not configured "
+              "(set LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY to enable)")
 
     # ── Stub eval result files ────────────────────────────────────────────
+    print(f"\nPreparing eval stub files in {args.mep_dir}...")
     eval_stub_paths = _write_stubs(args.mep_dir)
-    print(f"\nEval stub files written to {args.mep_dir}:")
-    for k, p in eval_stub_paths.items():
-        print(f"  {k:15s} → {p}")
+    for key, path in eval_stub_paths.items():
+        print(f"  {key:15s} → {path}")
 
-    # ── Eval loop ─────────────────────────────────────────────────────────
+    # ── Load eval samples ─────────────────────────────────────────────────
     samples = load_eval_samples(args.samples)
     if args.n:
         samples = samples[: args.n]
-
-    Path(args.mep_dir).mkdir(parents=True, exist_ok=True)
-    success = error = 0
-
     print(f"\nRunning {len(samples)} samples...\n")
+
+    # ── Eval loop ─────────────────────────────────────────────────────────
+    Path(args.mep_dir).mkdir(parents=True, exist_ok=True)
+    success = error = citation_failures = guardrail_hits = 0
+
     for i, sample_dict in enumerate(samples, 1):
         sid = sample_dict.get("sample_id", f"sample_{i}")
-        print(f"[{i:02d}/{len(samples)}] {sid} — {sample_dict['question'][:60]}...")
+        print(
+            f"[{i:02d}/{len(samples)}] {sid} "
+            f"({sample_dict.get('question_type', '?')}) — "
+            f"{sample_dict['question'][:60]}..."
+        )
         try:
             mep = run_sample(
                 sample_dict,
@@ -323,28 +422,77 @@ def main() -> None:
             )
             mep_path = write_mep(mep, args.mep_dir)
 
-            # Surface any errors immediately
-            if mep.errors:
-                print(f"  ⚠ errors: {mep.errors}")
-            else:
-                verdict = mep.verifier.verdict if mep.verifier else "skipped"
-                cited   = bool(mep.sql_generator and mep.sql_generator.source_tables)
-                print(f"  ✓ verdict={verdict}  citation={'✓' if cited else '✗'}  → {mep_path}")
+            # ── Per-sample status line ────────────────────────────────
+            verdict  = mep.verifier.verdict if mep.verifier else "skipped"
+            cited    = bool(
+                mep.sql_generator and mep.sql_generator.source_tables
+            )
+            guardrail = bool(
+                mep.sql_generator and mep.sql_generator.guardrail_triggered
+            )
 
+            status_parts = [
+                f"verdict={verdict}",
+                f"citation={'✓' if cited else '✗'}",
+            ]
+            if guardrail:
+                status_parts.append("GUARDRAIL")
+            if mep.errors:
+                status_parts.append(f"errors={mep.errors}")
+
+            print(f"  {'✓' if not mep.errors else '⚠'}  {' | '.join(status_parts)}")
+            print(f"     → {mep_path}")
+
+            # ── Run-level counters ────────────────────────────────────
             success += 1
+            if not cited:
+                citation_failures += 1
+            if guardrail:
+                guardrail_hits += 1
+
         except Exception as exc:
-            print(f"  ✗ FAILED: {exc}")
+            print(f"  ✗  FAILED: {exc}")
             error += 1
 
     # ── Run summary ───────────────────────────────────────────────────────
-    print(f"\n{'='*50}")
-    print(f"Run complete — {success} ok, {error} failed")
-    print(f"MEPs written to : {args.mep_dir}")
-    print(f"\nNext steps:")
-    print(f"  eval_outputs → python -m rbc_metrics_eval.eval.eval_outputs --mep_dir {args.mep_dir} --out {eval_stub_paths['eval_outputs']}")
-    print(f"  eval_traces  → python -m rbc_metrics_eval.eval.eval_traces  --mep_dir {args.mep_dir} --out {eval_stub_paths['eval_traces']}")
-    print(f"  eval_topk    → python -m rbc_metrics_eval.eval.eval_topk    --mep_dir {args.mep_dir} --out {eval_stub_paths['eval_topk']}")
-    print(f"  summarize    → python -m rbc_metrics_eval.eval.summarize    --metrics {eval_stub_paths['eval_outputs']} --out summary.csv")
+    print(f"\n{'='*52}")
+    print(f"  Run complete")
+    print(f"{'='*52}")
+    print(f"  Total samples   : {len(samples)}")
+    print(f"  Succeeded       : {success}")
+    print(f"  Failed          : {error}")
+    print(f"  Citation gaps   : {citation_failures}  "
+          f"(source_tables empty — check sql_generator prompt)")
+    print(f"  Guardrail hits  : {guardrail_hits}  "
+          f"(queries blocked by guardrail rules)")
+    print(f"\n  MEPs written to : {args.mep_dir}")
+
+    # ── Next-step commands ────────────────────────────────────────────────
+    print(f"\n{'─'*52}")
+    print("  Next: run eval passes in any order\n")
+    print(
+        f"  python -m rbc_metrics_eval.eval.eval_outputs \\\n"
+        f"      --mep_dir {args.mep_dir} \\\n"
+        f"      --out {eval_stub_paths['eval_outputs']}\n"
+    )
+    print(
+        f"  python -m rbc_metrics_eval.eval.eval_traces \\\n"
+        f"      --mep_dir {args.mep_dir} \\\n"
+        f"      --out {eval_stub_paths['eval_traces']}\n"
+    )
+    print(
+        f"  python -m rbc_metrics_eval.eval.eval_topk \\\n"
+        f"      --mep_dir {args.mep_dir} \\\n"
+        f"      --out {eval_stub_paths['eval_topk']} \\\n"
+        f"      --backend {args.backend} \\\n"
+        f"      --model {args.model}\n"
+    )
+    print(
+        f"  python -m rbc_metrics_eval.eval.summarize \\\n"
+        f"      --metrics {eval_stub_paths['eval_outputs']} \\\n"
+        f"      --out summary.csv"
+    )
+    print(f"{'─'*52}\n")
 
 
 if __name__ == "__main__":

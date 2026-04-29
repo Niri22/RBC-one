@@ -1,0 +1,182 @@
+[
+  {
+    "sample_id": "cc_001",
+    "question": "What is the overall default rate across all credit card clients?",
+    "expected_output": "22.12%",
+    "expected_sql": "SELECT ROUND(AVG(CAST(default_payment_next_month AS FLOAT)) * 100, 2) AS default_rate FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "default_rate",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_002",
+    "question": "What is the default rate for female clients?",
+    "expected_output": "20.79%",
+    "expected_sql": "SELECT ROUND(AVG(CAST(default_payment_next_month AS FLOAT)) * 100, 2) AS default_rate FROM credit_card_clients WHERE SEX = 2",
+    "question_type": "analyst",
+    "kpi_name": "default_rate",
+    "metadata": {"filter": "SEX=2"}
+  },
+  {
+    "sample_id": "cc_003",
+    "question": "What is the default rate for male clients?",
+    "expected_output": "23.84%",
+    "expected_sql": "SELECT ROUND(AVG(CAST(default_payment_next_month AS FLOAT)) * 100, 2) AS default_rate FROM credit_card_clients WHERE SEX = 1",
+    "question_type": "analyst",
+    "kpi_name": "default_rate",
+    "metadata": {"filter": "SEX=1"}
+  },
+  {
+    "sample_id": "cc_004",
+    "question": "Which education level has the highest default rate?",
+    "expected_output": "Other (education=5 or 6)",
+    "expected_sql": null,
+    "question_type": "exec",
+    "kpi_name": "default_rate",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_005",
+    "question": "What is the average credit limit (LIMIT_BAL) across all clients?",
+    "expected_output": "167484.32",
+    "expected_sql": "SELECT ROUND(AVG(LIMIT_BAL), 2) AS avg_credit_limit FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "avg_credit_limit",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_006",
+    "question": "What is the average credit limit for clients who defaulted vs those who did not?",
+    "expected_output": "defaulted: 130109.08, non-defaulted: 180085.95",
+    "expected_sql": "SELECT default_payment_next_month, ROUND(AVG(LIMIT_BAL), 2) AS avg_limit FROM credit_card_clients GROUP BY default_payment_next_month",
+    "question_type": "analyst",
+    "kpi_name": "avg_credit_limit",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_007",
+    "question": "What is the credit utilization rate for clients aged 25-35?",
+    "expected_output": "varies by client",
+    "expected_sql": "SELECT ROUND(AVG(BILL_AMT1 / NULLIF(LIMIT_BAL, 0)) * 100, 2) AS avg_utilization FROM credit_card_clients WHERE AGE BETWEEN 25 AND 35",
+    "question_type": "analyst",
+    "kpi_name": "credit_utilization",
+    "metadata": {"filter": "AGE 25-35"}
+  },
+  {
+    "sample_id": "cc_008",
+    "question": "What percentage of clients have a credit utilization above 80%?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(100.0 * SUM(CASE WHEN BILL_AMT1 / NULLIF(LIMIT_BAL, 0) > 0.8 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_high_utilization FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "credit_utilization",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_009",
+    "question": "What is the average bill amount in the most recent month (BILL_AMT1)?",
+    "expected_output": "51223.33",
+    "expected_sql": "SELECT ROUND(AVG(BILL_AMT1), 2) AS avg_bill_amt FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "avg_bill_amount",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_010",
+    "question": "What is the average payment amount in the most recent month (PAY_AMT1) for defaulting clients?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(AVG(PAY_AMT1), 2) AS avg_pay FROM credit_card_clients WHERE default_payment_next_month = 1",
+    "question_type": "analyst",
+    "kpi_name": "avg_payment_amount",
+    "metadata": {"filter": "defaulted=1"}
+  },
+  {
+    "sample_id": "cc_011",
+    "question": "How many clients have missed payments for 3 or more consecutive months?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT COUNT(*) AS count FROM credit_card_clients WHERE PAY_0 >= 3 OR PAY_2 >= 3 OR PAY_3 >= 3",
+    "question_type": "exec",
+    "kpi_name": "delinquency_count",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_012",
+    "question": "What is the default rate breakdown by marital status?",
+    "expected_output": "married: ~23.5%, single: ~21.4%, other: ~26.5%",
+    "expected_sql": "SELECT MARRIAGE, ROUND(AVG(CAST(default_payment_next_month AS FLOAT)) * 100, 2) AS default_rate FROM credit_card_clients GROUP BY MARRIAGE",
+    "question_type": "analyst",
+    "kpi_name": "default_rate",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_013",
+    "question": "What is the total outstanding balance (sum of BILL_AMT1) for all clients?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT SUM(BILL_AMT1) AS total_outstanding_balance FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "total_outstanding_balance",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_014",
+    "question": "Among clients with the highest credit limits (top 10%), what is their default rate?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(AVG(CAST(default_payment_next_month AS FLOAT)) * 100, 2) AS default_rate FROM credit_card_clients WHERE LIMIT_BAL >= (SELECT PERCENTILE_CONT(0.9) WITHIN GROUP (ORDER BY LIMIT_BAL) FROM credit_card_clients)",
+    "question_type": "analyst",
+    "kpi_name": "default_rate",
+    "metadata": {"filter": "top_10pct_limit"}
+  },
+  {
+    "sample_id": "cc_015",
+    "question": "What is the average age of clients who defaulted?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(AVG(AGE), 1) AS avg_age FROM credit_card_clients WHERE default_payment_next_month = 1",
+    "question_type": "exec",
+    "kpi_name": "avg_age_defaulted",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_016",
+    "question": "How does credit utilization differ between clients who defaulted and those who did not?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT default_payment_next_month, ROUND(AVG(BILL_AMT1 / NULLIF(LIMIT_BAL, 0)) * 100, 2) AS avg_utilization FROM credit_card_clients GROUP BY default_payment_next_month",
+    "question_type": "analyst",
+    "kpi_name": "credit_utilization",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_017",
+    "question": "What is the month-over-month trend in average bill amounts across all 6 billing periods?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(AVG(BILL_AMT1),2) AS m1, ROUND(AVG(BILL_AMT2),2) AS m2, ROUND(AVG(BILL_AMT3),2) AS m3, ROUND(AVG(BILL_AMT4),2) AS m4, ROUND(AVG(BILL_AMT5),2) AS m5, ROUND(AVG(BILL_AMT6),2) AS m6 FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "bill_trend",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_018",
+    "question": "What proportion of clients have a credit limit below 50000?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(100.0 * SUM(CASE WHEN LIMIT_BAL < 50000 THEN 1 ELSE 0 END) / COUNT(*), 2) AS pct_low_limit FROM credit_card_clients",
+    "question_type": "exec",
+    "kpi_name": "low_credit_limit_rate",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_019",
+    "question": "What is the repayment rate — the ratio of total payments to total bill amounts in month 1?",
+    "expected_output": "varies",
+    "expected_sql": "SELECT ROUND(SUM(PAY_AMT1) / NULLIF(SUM(BILL_AMT1), 0) * 100, 2) AS repayment_rate FROM credit_card_clients",
+    "question_type": "analyst",
+    "kpi_name": "repayment_rate",
+    "metadata": {}
+  },
+  {
+    "sample_id": "cc_020",
+    "question": "Is there a dataset field that cannot be used to answer any KPI? Show me what is unavailable.",
+    "expected_output": "UNANSWERABLE",
+    "expected_sql": null,
+    "question_type": "unanswerable",
+    "kpi_name": "none",
+    "metadata": {"intent": "test_unanswerable_handling"}
+  }
+]

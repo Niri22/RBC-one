@@ -117,25 +117,24 @@ def judge_mep(
     dict
         A dictionary of numeric scores and qualitative reasoning.
     """
-    sample = mep.get("sample", {})
-    plan = mep.get("plan", {}).get("parsed", {})
-    vision = mep.get("vision", {})
-    parsed_vision = vision.get("parsed", {})
+    sample  = mep.get("sample", {})
+    sql     = mep.get("sql_generator", {})              # was vision
+    verifier = mep.get("verifier") or {}
 
-    question = sample.get("question", "")
-    expected = sample.get("expected_output", "")
-    agent_answer = parsed_vision.get("answer", "")
-    agent_explanation = parsed_vision.get("explanation", "")
-    plan_steps = plan.get("steps", [])
-
-    steps_text = "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(plan_steps)) or "  (none)"
+    question  = sample.get("question", "")
+    expected  = sample.get("expected_output", "")
+    # Prefer verifier answer, fall back to sql_generator
+    predicted = (verifier.get("parsed") or {}).get("answer") \
+                or sql.get("parsed", {}).get("answer", "")
+    sql_query       = sql.get("sql", "")
+    source_tables   = ", ".join(sql.get("source_tables", [])) or "none cited"
 
     prompt = _JUDGE_PROMPT.format(
-        question=question or "unknown",
-        expected_answer=expected,
-        agent_answer=agent_answer,
-        agent_explanation=agent_explanation,
-        plan_steps=steps_text,
+        question=question,
+        expected=expected,        # matches {expected} in prompt template
+        predicted=predicted,      # matches {predicted} in prompt template
+        sql=sql_query,
+        source_tables=source_tables,
     )
 
     try:
