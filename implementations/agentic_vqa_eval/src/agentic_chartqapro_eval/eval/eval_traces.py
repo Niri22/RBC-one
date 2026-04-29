@@ -15,13 +15,14 @@ from ..mep.writer import iter_meps
 _REPLAY_CHECKS = [
     ("plan", "parsed", "steps"),
     ("plan", "prompt"),
-    ("vision", "prompt"),
-    ("vision", "tool_trace"),
-    ("vision", "parsed", "answer"),
+    ("sql_generator", "sql"),           # the actual SQL — most critical for audit
+    ("sql_generator", "source_tables"), # citation requirement
+    ("sql_generator", "source_fields"), # citation requirement
+    ("sql_generator", "tool_trace"),
     ("timestamps", "start"),
     ("timestamps", "end"),
-    ("sample", "image_ref", "path"),
     ("sample", "expected_output"),
+    ("sample", "question"),
 ]
 
 
@@ -47,28 +48,41 @@ def check_replayability(mep: dict) -> float:
 
 
 def evaluate_trace(mep: dict) -> dict:
-    """Compute trace-level metrics from a single MEP dict."""
     timestamps = mep.get("timestamps", {})
-    vision = mep.get("vision", {})
+    sql = mep.get("sql_generator", {})
     plan = mep.get("plan", {})
+    schema = mep.get("schema_retriever", {})
     sample = mep.get("sample", {})
     config = mep.get("config", {})
 
-    planner_ms = timestamps.get("planner_ms") or 0
-    vision_ms = timestamps.get("vision_ms") or 0
+    planner_ms    = timestamps.get("planner_ms") or 0
+    schema_ms     = timestamps.get("schema_retriever_ms") or 0
+    sql_ms        = timestamps.get("sql_generator_ms") or 0
+    verifier_ms   = timestamps.get("verifier_ms") or 0
 
     return {
-        "sample_id": sample.get("sample_id", ""),
-        "question_type": sample.get("question_type", ""),
-        "config_name": config.get("config_name", ""),
-        "latency_sec": (planner_ms + vision_ms) / 1000.0,
-        "planner_latency_sec": planner_ms / 1000.0,
-        "vision_latency_sec": vision_ms / 1000.0,
-        "tool_call_count": len(vision.get("tool_trace", [])),
-        "replayability": check_replayability(mep),
-        "planner_parse_ok": not plan.get("parse_error", True),
-        "vision_parse_ok": not vision.get("parse_error", True),
-        "error_count": len(mep.get("errors", [])),
+        "sample_id":               sample.get("sample_id", ""),
+        "question_type":           sample.get("question_type", ""),
+        "config_name":             config.get("config_name", ""),
+        # Latency
+        "latency_sec":             (planner_ms + schema_ms + sql_ms + verifier_ms) / 1000.0,
+        "planner_latency_sec":     planner_ms / 1000.0,
+        "schema_latency_sec":      schema_ms / 1000.0,
+        "sql_latency_sec":         sql_ms / 1000.0,
+        "verifier_latency_sec":    verifier_ms / 1000.0,
+        # SQL-specific
+        "sql_tool_call_count":     len(sql.get("tool_trace", [])),
+        "guardrail_triggered":     sql.get("guardrail_triggered", False),
+        "fallback_used":           sql.get("fallback_used", False),
+        "source_tables_count":     len(sql.get("source_tables", [])),
+        "citation_present":        len(sql.get("source_tables", [])) > 0,  # key trust signal
+        # Parse health
+        "planner_parse_ok":        not plan.get("parse_error", True),
+        "sql_parse_ok":            not sql.get("parse_error", True),
+        "schema_parse_ok":         not schema.get("parse_error", True),
+        # Replayability
+        "replayability":           check_replayability(mep),
+        "error_count":             len(mep.get("errors", [])),
     }
 
 

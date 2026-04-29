@@ -13,42 +13,30 @@ from ..utils.json_strict import parse_strict
 
 
 _JUDGE_PROMPT = """\
-You are an expert chart question-answering evaluator.
+You are evaluating the output of an internal metrics assistant.
 
-Question        : {question}
-Expected Answer : {expected_answer}
-Agent Answer    : {agent_answer}
-Agent Explanation: {agent_explanation}
+Question: {question}
+Expected metric: {expected}
+Predicted answer: {predicted}
+SQL query used: {sql}
+Source tables cited: {source_tables}
 
-Inspection plan the agent should have followed:
-{plan_steps}
-
-Score each dimension from 0.0 to 1.0 (floats):
-
-1. explanation_quality   – Is the explanation specific and grounded in chart elements
-                           (axes, legend, series, data values)?
-2. hallucination_rate    – Does the explanation claim things NOT supported by the chart?
-                           (0 = no hallucination, 1 = severe hallucination)
-3. plan_coverage         – Does the explanation address each required inspection step?
-4. plan_adherence        – Did the agent follow the plan steps in order without skipping?
-5. faithfulness_alignment – Does the explanation logically support the given answer?
-
-Output ONLY JSON, no markdown, no extra text:
+Score each dimension 1-5. Output ONLY JSON, no markdown, no extra text::
 {{
-  "explanation_quality": 0.0,
-  "hallucination_rate": 0.0,
-  "plan_coverage": 0.0,
-  "plan_adherence": 0.0,
-  "faithfulness_alignment": 0.0,
-  "reasoning": "<one-sentence rationale>"
-}}"""
+  "correctness":      <1-5>,  // Does the answer match the expected metric?
+  "source_cited":     <1-5>,  // Are source tables and fields clearly identified?
+  "reproducibility":  <1-5>,  // Could this SQL be re-run to get the same result?
+  "no_hallucination": <1-5>,  // Does the answer avoid presenting assumptions as facts?
+  "kpi_alignment":    <1-5>   // Does the answer match the KPI definition for this metric?
+}}
+"""
 
 _JUDGE_KEYS = [
-    "explanation_quality",
-    "hallucination_rate",
-    "plan_coverage",
-    "plan_adherence",
-    "faithfulness_alignment",
+    "correctness",
+    "source_cited",
+    "reproducibility",
+    "no_hallucination",
+    "kpi_alignment",
 ]
 
 

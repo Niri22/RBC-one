@@ -87,45 +87,50 @@ def score_unanswerable(expected: str, predicted: str) -> Optional[float]:
 def evaluate_mep(
     mep: dict,
     use_judge: bool = True,
-    judge_backend: str = "gemini",
-    judge_model: str = "gemini-2.5-flash-lite",
+    judge_backend: str = "anthropic",     # switch default — you're on Claude
+    judge_model: str = "claude-sonnet-4-6",
 ) -> dict:
-    """Evaluate a single MEP and return a metrics dict."""
-    sample = mep.get("sample", {})
-    plan = mep.get("plan", {})
-    vision = mep.get("vision", {})
+    sample     = mep.get("sample", {})
+    plan       = mep.get("plan", {})
+    sql        = mep.get("sql_generator", {})    # was vision
+    verifier   = mep.get("verifier") or {}
     timestamps = mep.get("timestamps", {})
-    config = mep.get("config", {})
+    config     = mep.get("config", {})
 
-    expected = sample.get("expected_output", "")
-    vision_parsed = vision.get("parsed", {})
-    verifier = mep.get("verifier") or {}
+    expected       = sample.get("expected_output", "")
+    sql_parsed     = sql.get("parsed", {})
     verifier_parsed = verifier.get("parsed") or {}
     verifier_verdict = verifier.get("verdict", "skipped")
 
-    # Final answer: use verifier output when it ran, otherwise fall back to vision
-    predicted = verifier_parsed.get("answer") or vision_parsed.get("answer", "")
+    # Final answer: prefer verifier output, fall back to sql_generator
+    predicted    = verifier_parsed.get("answer") or sql_parsed.get("answer", "")
     question_type = sample.get("question_type", "standard")
 
-    planner_ms = timestamps.get("planner_ms") or 0
-    vision_ms = timestamps.get("vision_ms") or 0
+    planner_ms  = timestamps.get("planner_ms") or 0
+    sql_ms      = timestamps.get("sql_generator_ms") or 0
     verifier_ms = timestamps.get("verifier_ms") or 0
 
     metrics: dict = {
-        "sample_id": sample.get("sample_id", ""),
-        "question_type": question_type,
-        "config_name": config.get("config_name", ""),
-        "expected": expected,
-        "predicted": predicted,
-        "vision_answer": vision_parsed.get("answer", ""),  # raw vision answer pre-verification
-        "verifier_verdict": verifier_verdict,
-        "planner_parse_ok": not plan.get("parse_error", True),
-        "vision_parse_ok": not vision.get("parse_error", True),
-        "json_parse_ok": (not plan.get("parse_error", True)) and (not vision.get("parse_error", True)),
-        "answer_accuracy": score_answer_accuracy(expected, predicted, question_type),
-        "latency_sec": (planner_ms + vision_ms + verifier_ms) / 1000.0,
-        "tool_call_count": len(vision.get("tool_trace", [])),
-        "has_errors": len(mep.get("errors", [])) > 0,
+        "sample_id":          sample.get("sample_id", ""),
+        "question_type":      question_type,
+        "config_name":        config.get("config_name", ""),
+        "expected":           expected,
+        "predicted":          predicted,
+        "sql_answer":         sql_parsed.get("answer", ""),   # raw pre-verification
+        "sql_query":          sql.get("sql", ""),             # the actual SQL — new
+        "source_tables":      sql.get("source_tables", []),   # for citation audit
+        "source_fields":      sql.get("source_fields", []),   # for citation audit
+        "verifier_verdict":   verifier_verdict,
+        "planner_parse_ok":   not plan.get("parse_error", True),
+        "sql_parse_ok":       not sql.get("parse_error", True),
+        "json_parse_ok":      (not plan.get("parse_error", True))
+                              and (not sql.get("parse_error", True)),
+        "citation_present":   len(sql.get("source_tables", [])) > 0,
+        "guardrail_triggered": sql.get("guardrail_triggered", False),
+        "answer_accuracy":    score_answer_accuracy(expected, predicted, question_type),
+        "latency_sec":        (planner_ms + sql_ms + verifier_ms) / 1000.0,
+        "tool_call_count":    len(sql.get("tool_trace", [])),
+        "has_errors":         len(mep.get("errors", [])) > 0,
     }
 
     ua = score_unanswerable(expected, predicted)
@@ -137,15 +142,15 @@ def evaluate_mep(
         for k, v in judge_scores.items():
             metrics[f"judge_{k}"] = v
 
-    # Log all scores back to the Langfuse trace if one was recorded in the MEP
+    # Langfuse trace logging — unchanged
     lf_trace_id = mep.get("lf_trace_id")
     if lf_trace_id:
         client = get_client()
         if client:
-            score_keys = ["answer_accuracy", "latency_sec"] + (
+            score_keys = ["answer_accuracy", "citation_present", "latency_sec"] + (
                 [f"judge_{k}" for k in judge_scores] if use_judge else []
             )
-            scores = {k: metrics[k] for k in score_keys if isinstance(metrics.get(k), (int, float))}
+            scores = {k: metrics[k] for k in score_keys if isinstance(metrics.get(k), (int, float, bool))}
             for k, v in scores.items():
                 with contextlib.suppress(Exception):
                     client.create_score(trace_id=lf_trace_id, name=k, value=float(v))
