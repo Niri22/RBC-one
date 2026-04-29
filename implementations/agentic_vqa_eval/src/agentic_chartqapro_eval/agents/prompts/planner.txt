@@ -23,8 +23,8 @@ Rules:
     1. Identify the KPI name and Logic
     2. Locate relevant tables and key fields required to calculate the KPI 
     3. Extract the specific data values or trends needed to answer the question
-    4. Compute or compare values if required; check if the answer is close to baseline
+    4. Compute or compare values if required; check if the answer is above and below the expected thresholds
 - expected_answer_type: the format expected for the answer
-- answerability_check: is the answer close to the baseline value? 
+- answerability_check: is the asked KPI available in the KPI list?
 - hints: empty list unless you have specific extraction strategies to suggest
 - Output JSON only — no markdown code fences, no extra keys, no trailing text
