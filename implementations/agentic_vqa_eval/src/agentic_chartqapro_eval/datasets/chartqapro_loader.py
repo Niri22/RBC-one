@@ -270,7 +270,7 @@ def load_chartqapro(
         The ready-to-use data records.
     """
     if image_dir is None:
-        image_dir = "data/chartqapro_images"
+        image_dir = "/home/coder/interpretability-llms-agents/data"
     img_dir = Path(image_dir)
     img_dir.mkdir(parents=True, exist_ok=True)
 
@@ -280,8 +280,11 @@ def load_chartqapro(
     if hf_token:
         kwargs["token"] = hf_token
 
-    print(f"Loading ahmed-masry/ChartQAPro split={split} …")
-    ds = load_dataset("ahmed-masry/ChartQAPro", split=split, **kwargs)
+    print(f"Loading default of credit card clients split={split} …")
+    file_path = r"/home/coder/interpretability-llms-agents/data/default of credit card clients.xls"
+    # df = pd.read_excel(file_path)
+    ds = load_dataset("xls", data_files=file_path)
+    # ds = load_dataset(file_path, split=split, **kwargs)
 
     samples: List[PerceivedSample] = []
     for row_idx, row in enumerate(ds):

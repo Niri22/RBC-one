@@ -401,6 +401,8 @@ def process_sample(
                 question=sample.question,
                 question_type=sample.question_type,
                 expected_output=sample.expected_output,
+                # image_ref=ImageRef(path=sample.image_path, sha256=image_sha),
+                metadata=sample.metadata,
                 metadata=sample_dict.get("metadata", {}),
             ),
             plan=MEPPlan(

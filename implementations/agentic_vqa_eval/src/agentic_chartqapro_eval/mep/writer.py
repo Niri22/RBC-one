@@ -5,6 +5,14 @@ from pathlib import Path
 from typing import Iterator
 
 from .schema import MEP
+from .schema import MEPSample
+from .schema import MEPConfig
+from .schema import MEPPlan
+from .schema import ToolTrace
+from .schema import MEPSchemaRetriever
+from .schema import MEPSQLGenerator
+from .schema import MEPVerifier
+
 
 
 def write_mep(mep: MEP, out_dir: str) -> str:
