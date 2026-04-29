@@ -40,10 +40,10 @@ from typing import Optional
 from dotenv import load_dotenv
  
 from ..agents.planner_agent import PlannerAgent
-from ..agents.schema_retriever import SchemaRetrieverTool
-from ..agents.sql_generator_agent import SQLGeneratorAgent
+from ..agents.sql_retrieval_agent import SQLRetrievalAgent
+from ..agents.sqlgenerator_agent import SQLGeneratorAgent
 from ..agents.verifier_agent import VerifierAgent
-from ..db.db_setup import setup_db
+from ..eval.db_setup import setup_db
 from ..datasets.perceived_sample import PerceivedSample
 from ..langfuse_integration.client import get_client
 from ..langfuse_integration.tracing import (
@@ -215,7 +215,7 @@ def _make_mep_config(config: dict, config_name: str) -> MEPConfig:
 def process_sample(
     sample_dict: dict,
     planner: PlannerAgent,
-    schema_retriever: SchemaRetrieverTool,
+    schema_retriever: SQLRetrievalAgent,
     sql_generator: SQLGeneratorAgent,
     verifier_agent: Optional[VerifierAgent],
     config: dict,
@@ -227,7 +227,7 @@ def process_sample(
     """
     Execute the multi-stage SQL evaluation pipeline for a single sample.
  
-    Coordinates PlannerAgent → SchemaRetrieverTool (optional) →
+    Coordinates PlannerAgent → SQLRetrievalAgent (optional) →
     SQLGeneratorAgent → VerifierAgent (optional) to produce a MEP.
  
     Replaces the original process_sample which used VisionAgent + OcrReaderTool.
@@ -241,7 +241,7 @@ def process_sample(
         Raw eval sample from eval_samples.json.
     planner : PlannerAgent
         Parses NL question into a structured KPI plan.
-    schema_retriever : SchemaRetrieverTool
+    schema_retriever : SQLRetrievalAgent
         Retrieves source table / field metadata for the KPI.
     sql_generator : SQLGeneratorAgent
         Generates and executes SQL via NL2SQLTool.
@@ -300,7 +300,7 @@ def process_sample(
             plan_parse_error = True
             traceback.print_exc()
  
-        # ── Step 2: SchemaRetrieverTool (optional) ────────────────────────
+        # ── Step 2: SQLRetrievalAgent (optional) ────────────────────────
         schema_result: Optional[MEPSchemaRetriever] = None
         schema_parse_error = False
         schema_ms          = 0.0
@@ -402,7 +402,7 @@ def process_sample(
                 question_type=sample.question_type,
                 expected_output=sample.expected_output,
                 # image_ref=ImageRef(path=sample.image_path, sha256=image_sha),
-                metadata=sample.metadata,
+                # metadata=sample.metadata,
                 metadata=sample_dict.get("metadata", {}),
             ),
             plan=MEPPlan(
@@ -533,7 +533,7 @@ def main() -> None:
     parser.add_argument(
         "--no_schema",
         action="store_true",
-        help="Skip SchemaRetrieverTool step",
+        help="Skip SQLRetrievalAgent step",
     )
     parser.add_argument(
         "--no_verifier",
@@ -628,7 +628,7 @@ def main() -> None:
         backend=config["planner_backend"],
         model=config["planner_model"],
     )
-    schema_retriever = SchemaRetrieverTool(db_uri=db_uri)
+    schema_retriever = SQLRetrievalAgent(db_uri=db_uri)
     # SQLGeneratorAgent holds the DB connection — one instance per run
     sql_generator    = SQLGeneratorAgent(
         db_uri=db_uri,

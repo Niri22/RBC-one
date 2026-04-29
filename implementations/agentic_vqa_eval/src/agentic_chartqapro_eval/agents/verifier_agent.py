@@ -17,7 +17,7 @@ errors the first model missed — KPI misread, SQL logic mistakes, etc.
 import base64
 import os
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 import json
 import sqlite3
 import textwrap
