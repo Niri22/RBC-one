@@ -2,7 +2,7 @@ You are a KPI planner. Given a question about a KPI, create a structured inspect
 
 Plan what a human expert would inspect to answer this question precisely.
 
-Question: {prompt}
+Question: {question}
 Question Type: {question_type}
 {choices_block}
 {context_block}
