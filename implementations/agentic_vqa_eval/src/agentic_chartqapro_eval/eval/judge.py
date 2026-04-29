@@ -1,33 +1,73 @@
 """LLM-as-judge evaluator for MEP outputs.
 
-Scores five rubric dimensions (0.0–1.0) using a text LLM.
+Scores five rubric dimensions (1–5) using a text LLM. All dimensions are
+SQL-specific: they evaluate query correctness, source citation, reproducibility,
+absence of hallucination, and KPI definition alignment.
 """
 
 import os
 from typing import Optional
 
-from google import genai
-from openai import OpenAI
-
 from ..utils.json_strict import parse_strict
 
 
 _JUDGE_PROMPT = """\
-You are evaluating the output of an internal metrics assistant.
+You are a senior data-quality reviewer auditing the output of an automated SQL \
+metrics assistant. Evaluate the response strictly on the five dimensions below.
 
-Question: {question}
-Expected metric: {expected}
-Predicted answer: {predicted}
-SQL query used: {sql}
-Source tables cited: {source_tables}
+--- INPUT ---
+Question      : {question}
+Expected value: {expected}
+Predicted value: {predicted}
+Verifier verdict: {verifier_verdict}
 
-Score each dimension 1-5. Output ONLY JSON, no markdown, no extra text::
+--- SQL EVIDENCE ---
+SQL query     : {sql}
+Source tables : {source_tables}
+Source fields : {source_fields}
+
+--- SCORING RUBRIC ---
+Score each dimension from 1 (poor) to 5 (excellent).
+
+1. correctness
+   Does the predicted value match the expected metric?
+   5 = exact match or within acceptable numeric tolerance
+   3 = directionally correct but imprecise
+   1 = wrong value or wrong units
+
+2. source_cited
+   Are the source tables and fields explicitly listed and correct?
+   5 = all relevant tables and fields named and appropriate
+   3 = tables cited but fields vague or partially missing
+   1 = no citations or wrong tables referenced
+
+3. reproducibility
+   Could another analyst re-run this SQL on the same DB and get the same answer?
+   5 = query is deterministic, complete, and references no ambiguous aliases
+   3 = query would likely reproduce but has minor ambiguity
+   1 = query is missing clauses, uses SELECT *, or references unknown tables
+
+4. no_hallucination
+   Does the answer avoid stating assumptions, computed sub-values, or \
+contextual details that are not derivable from the SQL or schema?
+   5 = every claim is directly supported by the query result
+   3 = minor unsupported claim present
+   1 = answer invents data or attributes not in the result set
+
+5. kpi_alignment
+   Does the SQL metric logic match the business definition of the KPI implied \
+by the question?
+   5 = correct aggregation, filters, date range, and granularity
+   3 = right metric family but wrong aggregation or filter
+   1 = wrong metric computed entirely
+
+Output ONLY valid JSON, no markdown fences, no extra text:
 {{
-  "correctness":      <1-5>,  // Does the answer match the expected metric?
-  "source_cited":     <1-5>,  // Are source tables and fields clearly identified?
-  "reproducibility":  <1-5>,  // Could this SQL be re-run to get the same result?
-  "no_hallucination": <1-5>,  // Does the answer avoid presenting assumptions as facts?
-  "kpi_alignment":    <1-5>   // Does the answer match the KPI definition for this metric?
+  "correctness":      <1-5>,
+  "source_cited":     <1-5>,
+  "reproducibility":  <1-5>,
+  "no_hallucination": <1-5>,
+  "kpi_alignment":    <1-5>
 }}
 """
 
@@ -41,38 +81,18 @@ _JUDGE_KEYS = [
 
 
 def _default_scores() -> dict:
-    """
-    Generate a baseline scores dictionary with all metrics set to zero.
-
-    Returns
-    -------
-    dict
-        The initialized scores mapping.
-    """
     return dict.fromkeys(_JUDGE_KEYS, 0.0)
 
 
 def _call_llm(prompt: str, backend: str, model: str, api_key: Optional[str]) -> str:
-    """
-    Send a judging prompt to the specified backend.
+    """Send the judging prompt to the specified LLM backend.
 
     Parameters
     ----------
-    prompt : str
-        The evaluation rubric and data.
-    backend : {'openai', 'gemini'}
-        The model provider.
-    model : str
-        The specific model name.
-    api_key : str, optional
-        Provider API key.
-
-    Returns
-    -------
-    str
-        The model's textual assessment.
+    backend : {'openai', 'gemini', 'anthropic'}
     """
     if backend == "openai":
+        from openai import OpenAI
         client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
         resp = client.chat.completions.create(
             model=model,
@@ -83,67 +103,87 @@ def _call_llm(prompt: str, backend: str, model: str, api_key: Optional[str]) -> 
         return resp.choices[0].message.content or ""
 
     if backend == "gemini":
+        from google import genai
         client = genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
         resp = client.models.generate_content(model=model, contents=prompt)
         return resp.text or ""
+
+    if backend == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", ""))
+        resp = client.messages.create(
+            model=model,
+            max_tokens=512,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text or ""
 
     raise ValueError(f"Unknown judge backend: {backend!r}")
 
 
 def judge_mep(
     mep: dict,
-    backend: str = "gemini",
-    model: str = "gemini-2.5-flash-lite",
+    backend: str = "anthropic",
+    model: str = "claude-sonnet-4-6",
     api_key: Optional[str] = None,
 ) -> dict:
-    """
-    Score the quality of a single agent execution record.
+    """Score the SQL quality of a single MEP on five rubric dimensions (1–5).
 
-    Uses an LLM to evaluate faithfulness, plan adherence, and groundedness.
+    Evaluates correctness, citation accuracy, reproducibility, hallucination
+    rate, and KPI alignment. Returns raw 1–5 scores per dimension.
 
     Parameters
     ----------
     mep : dict
-        The execution trace to judge.
-    backend : str, default 'gemini'
-        The provider for the judge model.
-    model : str, default 'gemini-2.5-flash-lite'
-        The model name.
+        Deserialized MEP JSON.
+    backend : {'openai', 'gemini', 'anthropic'}
+        LLM provider for the judge.
+    model : str
+        Model name for the chosen backend.
     api_key : str, optional
-        API key for the judge.
+        Provider API key. Falls back to environment variable.
 
     Returns
     -------
     dict
-        A dictionary of numeric scores and qualitative reasoning.
+        Keys: correctness, source_cited, reproducibility, no_hallucination,
+        kpi_alignment. Values are floats 1.0–5.0, or 0.0 on parse failure.
     """
-    sample  = mep.get("sample", {})
-    sql     = mep.get("sql_generator", {})              # was vision
+    sample = mep.get("sample", {})
+    sql = mep.get("sql_generator", {})
     verifier = mep.get("verifier") or {}
 
-    question  = sample.get("question", "")
-    expected  = sample.get("expected_output", "")
-    # Prefer verifier answer, fall back to sql_generator
-    predicted = (verifier.get("parsed") or {}).get("answer") \
-                or sql.get("parsed", {}).get("answer", "")
-    sql_query       = sql.get("sql", "")
-    source_tables   = ", ".join(sql.get("source_tables", [])) or "none cited"
+    question = sample.get("question", "")
+    expected = sample.get("expected_output", "")
+    predicted = (
+        (verifier.get("parsed") or {}).get("answer")
+        or sql.get("parsed", {}).get("answer", "")
+    )
+    verifier_verdict = verifier.get("verdict", "skipped")
+    sql_query = sql.get("sql", "") or sql.get("parsed", {}).get("sql", "")
+    source_tables = ", ".join(sql.get("source_tables", [])) or "none cited"
+    source_fields = ", ".join(sql.get("source_fields", [])) or "none cited"
 
     prompt = _JUDGE_PROMPT.format(
         question=question,
-        expected=expected,        # matches {expected} in prompt template
-        predicted=predicted,      # matches {predicted} in prompt template
+        expected=expected,
+        predicted=predicted,
+        verifier_verdict=verifier_verdict,
         sql=sql_query,
         source_tables=source_tables,
+        source_fields=source_fields,
     )
 
     try:
         raw = _call_llm(prompt, backend, model, api_key)
         scores, ok = parse_strict(raw, required_keys=_JUDGE_KEYS)
         if not scores:
-            scores = _default_scores()
-            scores["judge_parse_error"] = True
-        return scores
+            s = _default_scores()
+            s["judge_parse_error"] = True
+            return s
+        # Normalise to float — LLM may return int
+        return {k: float(scores.get(k, 0)) for k in _JUDGE_KEYS}
     except Exception as exc:
         s = _default_scores()
         s["judge_error"] = str(exc)

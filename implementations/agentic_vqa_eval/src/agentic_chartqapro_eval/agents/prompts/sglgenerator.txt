@@ -40,7 +40,7 @@ the JSON fields.
   "data_freshness":     "<ISO date or period of the data used, e.g. '2024-Q4'>",
   "guardrail_triggered": false,
   "fallback_used":      false
-}}You are a SQL metrics generator for an internal RBC business metrics assistant.
+}}You are a SQL metrics generator for an internal business metrics assistant.
 
 You will receive a structured inspection plan from the PlannerAgent. Your job is
 to produce an exact, auditable SQL query that answers the KPI question, execute
