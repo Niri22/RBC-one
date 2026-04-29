@@ -287,12 +287,12 @@ def process_sample(  # noqa: PLR0915
                 vision_model=config["vision_model"],
             ),
             sample=MEPSample(
-                dataset="ChartQAPro",
+                dataset="default of credit card clients.csv",
                 sample_id=sample.sample_id,
                 question=sample.question,
                 question_type=sample.question_type.value,
                 expected_output=sample.expected_output,
-                image_ref=ImageRef(path=sample.image_path, sha256=image_sha),
+                # image_ref=ImageRef(path=sample.image_path, sha256=image_sha),
                 metadata=sample.metadata,
             ),
             plan=MEPPlan(
