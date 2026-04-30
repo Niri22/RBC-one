@@ -43,12 +43,20 @@ _BLOCKED_PATTERNS = [
     re.compile(r"\bCROSS\s+JOIN\b", re.IGNORECASE),        # no unbounded joins
 ]
 
+# SQL keywords that can legally follow FROM/JOIN and must not be flagged as table names
+_SQL_KEYWORDS = frozenset({
+    "SELECT", "WHERE", "GROUP", "ORDER", "HAVING", "LIMIT", "OFFSET",
+    "UNION", "INTERSECT", "EXCEPT", "LATERAL", "NATURAL", "INNER",
+    "LEFT", "RIGHT", "OUTER", "FULL", "CROSS", "ON", "SET", "WITH",
+    "CASE", "WHEN", "THEN", "ELSE", "END", "AS", "AND", "OR", "NOT",
+})
+
 
 def _load_template() -> str:
     return SQL_GENERATOR_PROMPT_PATH.read_text()
 
 
-def _apply_guardrails(sql: str, allowed_tables: List[str]) -> Tuple[bool, str]:
+def _apply_guardrails(sql: Optional[str], allowed_tables: List[str]) -> Tuple[bool, str]:
     """
     Check SQL against guardrail rules.
 
@@ -67,21 +75,31 @@ def _apply_guardrails(sql: str, allowed_tables: List[str]) -> Tuple[bool, str]:
     reason : str
         Human-readable explanation of the violation (empty if clean).
     """
+    if not sql:
+        return False, ""
+
     for pattern in _BLOCKED_PATTERNS:
         if pattern.search(sql):
             return True, f"Blocked pattern matched: {pattern.pattern}"
 
     if allowed_tables:
-        sql_upper = sql.upper()
-        for table in allowed_tables:
-            # Remove table references found in the SQL from the check
-            sql_upper = sql_upper.replace(table.upper(), "")
-        # Rough heuristic: if unknown table names appear after FROM/JOIN
-        from_join = re.findall(
-            r"(?:FROM|JOIN)\s+(\w+)", sql, re.IGNORECASE
-        )
+        # Collect locally-defined names that legitimately appear after FROM/JOIN:
+        # CTE aliases:  WITH cte_name AS (...)  and  , cte_name AS (...)
+        cte_names: set[str] = set(re.findall(r'\bWITH\s+(\w+)\s+AS\s*\(', sql, re.IGNORECASE))
+        cte_names.update(re.findall(r',\s*(\w+)\s+AS\s*\(', sql, re.IGNORECASE))
+        # Subquery aliases:  (...) AS alias  or  (...) alias
+        subq_aliases: set[str] = set(re.findall(r'\)\s+(?:AS\s+)?(\w+)', sql, re.IGNORECASE))
+        local_names = {n.upper() for n in cte_names | subq_aliases}
+
+        allowed_upper = {t.upper() for t in allowed_tables}
+        from_join = re.findall(r"(?:FROM|JOIN)\s+(\w+)", sql, re.IGNORECASE)
         for ref in from_join:
-            if ref.upper() not in [t.upper() for t in allowed_tables]:
+            ref_upper = ref.upper()
+            if (
+                ref_upper not in allowed_upper
+                and ref_upper not in local_names
+                and ref_upper not in _SQL_KEYWORDS
+            ):
                 return True, f"Unknown table reference: {ref!r}"
 
     return False, ""

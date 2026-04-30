@@ -52,13 +52,22 @@ def score_answer_accuracy(expected: str, predicted: str, question_type: str) -> 
     if exp == pred:
         return 1.0
 
-    # Numeric tolerance check (5% relative, 0.5 absolute for small values)
     exp_num = _to_number(exp)
     pred_num = _to_number(pred)
-    if (
-        exp_num is not None and pred_num is not None and math.isclose(exp_num, pred_num, rel_tol=0.001, abs_tol=0.5)
-    ):  # tighter tolerance for chart QA, can adjust as needed
-        return 1.0
+
+    if exp_num is not None and pred_num is not None:
+        # Direct numeric match (rel_tol=0.1%, abs_tol=0.05 for near-zero values)
+        if math.isclose(exp_num, pred_num, rel_tol=0.001, abs_tol=0.05):
+            return 1.0
+
+        # Decimal/percentage normalization: agent returned 0.2212, expected 22.12
+        # Only applies when one value is in (0, 1] and the other is in (0, 100].
+        if 0 < pred_num <= 1 and 0 < exp_num <= 100:
+            if math.isclose(pred_num * 100, exp_num, rel_tol=0.001, abs_tol=0.5):
+                return 1.0
+        if 0 < exp_num <= 1 and 0 < pred_num <= 100:
+            if math.isclose(exp_num * 100, pred_num, rel_tol=0.001, abs_tol=0.5):
+                return 1.0
 
     # MCQ substring check
     if question_type == "mcq" and (exp in pred or pred in exp):
