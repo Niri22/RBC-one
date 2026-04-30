@@ -72,47 +72,54 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 BACKEND_CONFIGS: dict = {
+    "anthropic_claude": {
+        "planner_backend": "anthropic",
+        "planner_model":   "claude-sonnet-4-6",
+        "sql_backend":     "anthropic",
+        "sql_model":       "claude-sonnet-4-6",
+        "judge_backend":   "anthropic",
+    },
     "openai_openai": {
         "planner_backend": "openai",
-        "planner_model": "gpt-4o",
-        "vision_backend": "openai",
-        "vision_model": "gpt-4o",
-        "judge_backend": "openai",
+        "planner_model":   "gpt-4o",
+        "sql_backend":     "openai",
+        "sql_model":       "gpt-4o",
+        "judge_backend":   "openai",
     },
     "gemini_gemini": {
         "planner_backend": "gemini",
-        "planner_model": "gemini-2.5-flash-lite",
-        "vision_backend": "gemini",
-        "vision_model": "gemini-2.5-flash-lite",
-        "judge_backend": "gemini",
+        "planner_model":   "gemini-2.5-flash-lite",
+        "sql_backend":     "gemini",
+        "sql_model":       "gemini-2.5-flash-lite",
+        "judge_backend":   "gemini",
     },
     "openai_gemini": {
         "planner_backend": "openai",
-        "planner_model": "gpt-4o",
-        "vision_backend": "gemini",
-        "vision_model": "gemini-2.5-flash-lite",
-        "judge_backend": "openai",
+        "planner_model":   "gpt-4o",
+        "sql_backend":     "gemini",
+        "sql_model":       "gemini-2.5-flash-lite",
+        "judge_backend":   "openai",
     },
     "gemini_openai": {
         "planner_backend": "gemini",
-        "planner_model": "gemini-2.5-flash-lite",
-        "vision_backend": "openai",
-        "vision_model": "gpt-4o",
-        "judge_backend": "gemini",
+        "planner_model":   "gemini-2.5-flash-lite",
+        "sql_backend":     "openai",
+        "sql_model":       "gpt-4o",
+        "judge_backend":   "gemini",
     },
 }
 
 # Fallback plan used when the planner fails entirely
 _FALLBACK_PLAN = {
     "steps": [
-        "Identify the chart type and read the title",
-        "Locate axes labels, legend entries, and series names",
-        "Extract the data values relevant to the question",
-        "Check whether the question is answerable from the chart",
+        "Identify the KPI name and business question",
+        "Determine the source table(s) and relevant columns",
+        "Apply any required filters (date range, segment, etc.)",
+        "Compute the metric using the appropriate aggregation",
     ],
-    "expected_answer_type": "string",
-    "question_type": "standard",
-    "answerability_check": "uncertain",
+    "expected_answer_type": "numeric",
+    "question_type":        "standard",
+    "answerability_check":  "uncertain",
     "hints": [],
 }
 
