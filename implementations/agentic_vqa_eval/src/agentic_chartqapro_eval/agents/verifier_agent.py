@@ -17,7 +17,7 @@ errors the first model missed — KPI misread, SQL logic mistakes, etc.
 import base64
 import os
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Optional, Tuple, Union
 import json
 import sqlite3
 import textwrap
@@ -50,8 +50,12 @@ SQLGeneratorAgent's Draft SQL:
 SQL Execution Result (first {max_rows} rows):
 {sql_result}
  
-SQLGeneratorAgent's Draft Answer: {draft_answer}
-SQLGeneratorAgent's Draft Explanation: {draft_explanation}
+Draft Answer     : {draft_answer}
+Draft Explanation: {draft_explanation}
+Source Tables    : {source_tables}
+Source Fields    : {source_fields}
+Data Freshness   : {data_freshness}
+Fallback Used    : {fallback_used}
 
 Examine the SQL code. Then decide:
   CONFIRM — the draft answer is correct (output the same answer unchanged)
@@ -69,85 +73,93 @@ Output ONLY JSON, no markdown, no extra text:
 {{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence summerize the SQL query and calculation steps>"}}"""
 
 
+
 # ---------------------------------------------------------------------------
 # SQL execution helper
 # ---------------------------------------------------------------------------
- 
- 
+
+
 def _execute_sql(
     sql: str,
-    data_source: Union["pd.DataFrame", sqlite3.Connection, None],  # noqa: F821
+    data_source: Union[str, sqlite3.Connection, None],
     max_rows: int = _MAX_RESULT_ROWS,
 ) -> str:
     """
     Run *sql* against *data_source* and return a compact string representation
     of the result suitable for inclusion in a prompt.
- 
+
     Parameters
     ----------
     sql : str
-        The SQL query to execute.
-    data_source : pd.DataFrame | sqlite3.Connection | None
-        - ``pd.DataFrame``: registered as the table ``"data"`` inside an
-          in-process DuckDB connection, so the SQL should reference that name.
-        - ``sqlite3.Connection``: executed directly.
+        The SQL query to execute.  An empty string or sentinel value returns
+        an informational notice without raising.
+    data_source : str | sqlite3.Connection | None
+        - ``str``: treated as a SQLite file path (e.g. from a
+          ``"sqlite:///path/to/file.db"`` URI — the ``sqlite:///`` prefix is
+          stripped automatically).
+        - ``sqlite3.Connection``: used directly; useful in tests.
         - ``None``: returns an informational message instead of raising.
- 
+
     max_rows : int
         Maximum number of result rows to include in the returned string.
- 
+
     Returns
     -------
     str
         A text table of results, an error message, or a not-available notice.
     """
+    if not sql or sql.strip() == "(no SQL provided)":
+        return "(no SQL to execute)"
+
     if data_source is None:
         return "(no data source provided — cannot execute SQL)"
- 
+
     try:
-        # ── pandas DataFrame via DuckDB ──────────────────────────────────────
+        # ── Resolve a URI string to a sqlite3 connection ─────────────────────
+        if isinstance(data_source, str):
+            # Strip SQLAlchemy sqlite prefix so sqlite3 can open the file.
+            path = data_source
+            for prefix in ("sqlite:///", "sqlite://"):
+                if path.startswith(prefix):
+                    path = path[len(prefix):]
+                    break
+            conn = sqlite3.connect(path)
+            close_conn = True
+        elif isinstance(data_source, sqlite3.Connection):
+            conn = data_source
+            close_conn = False
+        else:
+            return f"(unsupported data source type: {type(data_source).__name__})"
+
         try:
-            import duckdb  # optional fast path
-            import pandas as pd
- 
-            if isinstance(data_source, pd.DataFrame):
-                con = duckdb.connect()
-                con.register("data", data_source)
-                result_df = con.execute(sql).df()
-                con.close()
-                rows = result_df.head(max_rows)
-                return rows.to_string(index=False)
-        except ImportError:
-            # DuckDB not available — fall through to sqlite3 path if applicable
-            pass
- 
-        # ── sqlite3 Connection ───────────────────────────────────────────────
-        if isinstance(data_source, sqlite3.Connection):
-            cursor = data_source.execute(sql)
+            cursor = conn.execute(sql)
             col_names = [d[0] for d in cursor.description] if cursor.description else []
             rows = cursor.fetchmany(max_rows)
-            if not rows:
-                return "(query returned no rows)"
-            header = " | ".join(col_names)
-            divider = "-" * len(header)
-            body = "\n".join(" | ".join(str(v) for v in row) for row in rows)
-            return f"{header}\n{divider}\n{body}"
- 
-        return f"(unsupported data source type: {type(data_source).__name__})"
- 
+        finally:
+            if close_conn:
+                conn.close()
+
+        if not rows:
+            return "(query returned no rows)"
+
+        header = " | ".join(col_names)
+        divider = "-" * len(header)
+        body = "\n".join(" | ".join(str(v) for v in row) for row in rows)
+        return f"{header}\n{divider}\n{body}"
+
     except Exception as exc:  # noqa: BLE001
         return f"SQL ERROR: {exc}"
- 
- 
+
+
 # ---------------------------------------------------------------------------
 # Text-only LLM helpers
 # ---------------------------------------------------------------------------
- 
- 
+
+
 def _call_llm_openai(prompt: str, model: str, api_key: Optional[str]) -> str:
     """
     Submit a text completion request to the OpenAI API.
- 
+
     Parameters
     ----------
     prompt : str
@@ -156,14 +168,14 @@ def _call_llm_openai(prompt: str, model: str, api_key: Optional[str]) -> str:
         The OpenAI model name (e.g. ``"gpt-4o-mini"``).
     api_key : str, optional
         API key; falls back to the ``OPENAI_API_KEY`` environment variable.
- 
+
     Returns
     -------
     str
         Raw text response from the model.
     """
     from openai import OpenAI  # imported lazily — not required at module load
- 
+
     client = OpenAI(api_key=api_key or os.environ.get("OPENAI_API_KEY", ""))
     response = client.chat.completions.create(
         model=model,
@@ -172,12 +184,12 @@ def _call_llm_openai(prompt: str, model: str, api_key: Optional[str]) -> str:
         temperature=0,
     )
     return response.choices[0].message.content or ""
- 
- 
+
+
 def _call_llm_gemini(prompt: str, model: str, api_key: Optional[str]) -> str:
     """
     Submit a text completion request to the Google Gemini API.
- 
+
     Parameters
     ----------
     prompt : str
@@ -186,14 +198,14 @@ def _call_llm_gemini(prompt: str, model: str, api_key: Optional[str]) -> str:
         The Gemini model name (e.g. ``"gemini-2.0-flash-lite"``).
     api_key : str, optional
         API key; falls back to the ``GEMINI_API_KEY`` environment variable.
- 
+
     Returns
     -------
     str
         Raw text response from the model.
     """
     from google import genai  # imported lazily — not required at module load
- 
+
     client = genai.Client(api_key=api_key or os.environ.get("GEMINI_API_KEY", ""))
     response = client.models.generate_content(
         model=model,
@@ -201,34 +213,92 @@ def _call_llm_gemini(prompt: str, model: str, api_key: Optional[str]) -> str:
         config=genai.types.GenerateContentConfig(temperature=0, max_output_tokens=256),
     )
     return response.text or ""
- 
- 
+
+
+def _call_llm_anthropic(prompt: str, model: str, api_key: Optional[str]) -> str:
+    """
+    Submit a text completion request to the Anthropic API.
+
+    Parameters
+    ----------
+    prompt : str
+        The full verifier prompt.
+    model : str
+        The Anthropic model name (e.g. ``"claude-sonnet-4-6"``).
+    api_key : str, optional
+        API key; falls back to the ``ANTHROPIC_API_KEY`` environment variable.
+
+    Returns
+    -------
+    str
+        Raw text response from the model.
+    """
+    import anthropic  # imported lazily — not required at module load
+
+    client = anthropic.Anthropic(
+        api_key=api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    )
+    message = client.messages.create(
+        model=model,
+        max_tokens=256,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return message.content[0].text if message.content else ""
+
+
 # ---------------------------------------------------------------------------
 # VerifierAgent
 # ---------------------------------------------------------------------------
- 
- 
+
+
 class VerifierAgent:
     """
-    A validation agent that critiques draft SQL answers against live query results.
- 
-    Executes the draft SQL against the provided data source, then passes the
-    query, result, plan, and draft answer to a text LLM for a second-opinion
-    audit.  Returns a structured verdict of CONFIRM or REVISE.
+    A validation agent that critiques SQLGeneratorAgent's draft SQL answer.
+
+    Connects to the same database used by the generator, re-executes the draft
+    SQL to obtain live results, then passes the full generator output — SQL,
+    execution result, source citations, and flags — to a text LLM for a
+    second-opinion audit.  Returns a structured verdict of CONFIRM or REVISE.
+
+    Short-circuit behaviour
+    -----------------------
+    If ``sql_parsed["guardrail_triggered"]`` is ``True`` the LLM call is skipped
+    entirely: the verifier confirms the ``GUARDRAIL_VIOLATION`` answer unchanged.
+    This avoids wasting tokens auditing SQL that has already been sanitised.
+
+    Usage (from the Floater pipeline)
+    -----------------------------------
+    ::
+
+        _, sql_parsed, sql_err, sql_raw = sql_generator.run(sample, plan, schema, lf_trace)
+
+        _, ver_parsed, ver_err, ver_raw = verifier.run(
+            sample=sample,
+            plan=plan,
+            sql_parsed=sql_parsed,
+            lf_trace=lf_trace,
+        )
+        final_answer = ver_parsed["answer"]
     """
- 
+
     def __init__(
         self,
-        backend: str = "gemini",
-        model: str = "gemini-2.0-flash-lite",
+        db_uri: str,
+        backend: str = "anthropic",
+        model: str = "claude-sonnet-4-6",
         api_key: Optional[str] = None,
     ):
         """
-        Initialise the verifier with the specified text LLM backend.
- 
+        Initialise the verifier with the same database as SQLGeneratorAgent.
+
         Parameters
         ----------
-        backend : {'openai', 'gemini'}
+        db_uri : str
+            SQLAlchemy-compatible SQLite URI, e.g. ``"sqlite:///rbc_metrics.db"``.
+            Must match the ``db_uri`` passed to ``SQLGeneratorAgent`` so the
+            verifier re-executes SQL against the same data.
+        backend : {'openai', 'gemini', 'anthropic'}
             The LLM provider used for the audit call.
         model : str
             The model name to request.
@@ -236,96 +306,136 @@ class VerifierAgent:
             API key to use for calls; falls back to the relevant environment
             variable if omitted.
         """
+        self.db_uri = db_uri
         self.backend = backend
         self.model = model
         self.api_key = api_key
- 
+
     def run(
         self,
         sample,  # PerceivedSample
         plan: dict,
-        vision_parsed: dict,
-        data_source: Union["pd.DataFrame", sqlite3.Connection, None] = None,  # noqa: F821
+        sql_parsed: dict,
         lf_trace: Any = None,
     ) -> Tuple[str, dict, bool, str]:
         """
-        Execute the draft SQL and critically audit the draft answer.
- 
+        Re-execute the draft SQL and critically audit SQLGeneratorAgent's answer.
+
         Parameters
         ----------
         sample : PerceivedSample
-            The source data sample containing ``question``, ``question_type``,
-            and optionally ``sql`` with the draft query.
+            The original question sample (provides ``question`` and
+            ``question_type``).
         plan : dict
-            The inspection plan used by the previous agent.
-        vision_parsed : dict
-            The draft answer and explanation to audit.  Expected keys:
-            ``"answer"``, ``"explanation"``, and optionally ``"sql"``.
-        data_source : pd.DataFrame | sqlite3.Connection | None, optional
-            Live data against which to execute the SQL.  When ``None`` the
-            verifier falls back to confirming without execution evidence.
+            The inspection plan from PlannerAgent (used for ``steps``).
+        sql_parsed : dict
+            The ``parsed`` dict returned by ``SQLGeneratorAgent.run()``.
+            Expected keys (SQL_REQUIRED_KEYS):
+            ``"sql"``, ``"answer"``, ``"explanation"``, ``"source_tables"``,
+            ``"source_fields"``, ``"data_freshness"``,
+            ``"guardrail_triggered"``, ``"fallback_used"``.
         lf_trace : Any, optional
             Langfuse tracing object for observability.
- 
+
         Returns
         -------
         prompt : str
-            The verifier prompt rendered for the model.
+            The verifier prompt rendered for the model (empty string on
+            guardrail short-circuit).
         parsed : dict
             The final audited response containing ``'verdict'``, ``'answer'``,
             and ``'reasoning'``.
         parse_error : bool
             ``True`` if the JSON result was malformed.
         raw_text : str
-            The raw string response from the LLM.
+            The raw string response from the LLM (empty on short-circuit).
         """
+        # ── Unpack SQLGeneratorAgent output ──────────────────────────────────
+        sql               = sql_parsed.get("sql", "") or ""
+        draft_answer      = sql_parsed.get("answer", "(none)")
+        draft_explanation = sql_parsed.get("explanation", "(none)")
+        source_tables     = sql_parsed.get("source_tables", [])
+        source_fields     = sql_parsed.get("source_fields", [])
+        data_freshness    = sql_parsed.get("data_freshness", "(unknown)")
+        guardrail_triggered = bool(sql_parsed.get("guardrail_triggered", False))
+        fallback_used     = bool(sql_parsed.get("fallback_used", False))
+
+        # ── Short-circuit: guardrail already fired ────────────────────────────
+        if guardrail_triggered:
+            short_circuit = {
+                "verdict": "confirmed",
+                "answer": draft_answer,
+                "reasoning": (
+                    "Guardrail triggered by SQLGeneratorAgent — "
+                    "SQL was sanitised; verifier confirms without re-execution."
+                ),
+            }
+            span = open_llm_span(
+                lf_trace,
+                name="verifier",
+                input_data={"guardrail_short_circuit": True, "draft_answer": draft_answer},
+                model=self.model,
+                metadata={"backend": self.backend, "guardrail_triggered": True},
+            )
+            close_span(span, output=short_circuit)
+            return "", short_circuit, False, ""
+
+        # ── Plan steps ───────────────────────────────────────────────────────
         plan_steps = plan.get("steps", [])
         steps_text = (
-            "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(plan_steps)) or "  (none)"
+            "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(plan_steps))
+            or "  (none)"
         )
- 
-        draft_answer = vision_parsed.get("answer", "(none)")
-        draft_explanation = vision_parsed.get("explanation", "(none)")
- 
-        # Prefer SQL stored on the parsed output; fall back to the sample attribute.
-        sql = vision_parsed.get("sql") or getattr(sample, "sql", "") or "(no SQL provided)"
- 
+
         question_type = getattr(
             getattr(sample, "question_type", None),
             "value",
             str(getattr(sample, "question_type", "standard")),
         )
- 
-        # ── Execute SQL and capture results ──────────────────────────────────
-        sql_result = _execute_sql(sql, data_source, max_rows=_MAX_RESULT_ROWS)
- 
+
+        # ── Re-execute SQL against the same db_uri ────────────────────────────
+        sql_result = _execute_sql(sql, self.db_uri, max_rows=_MAX_RESULT_ROWS)
+
+        # ── Render prompt ─────────────────────────────────────────────────────
         prompt = _VERIFIER_PROMPT.format(
             question=sample.question,
             question_type=question_type,
             plan_steps=steps_text,
-            sql=textwrap.indent(sql, "  "),
+            sql=textwrap.indent(sql or "(no SQL provided)", "  "),
             sql_result=textwrap.indent(sql_result, "  "),
             draft_answer=draft_answer,
             draft_explanation=draft_explanation,
+            source_tables=", ".join(source_tables) if source_tables else "(none)",
+            source_fields=", ".join(source_fields) if source_fields else "(none)",
+            data_freshness=data_freshness,
+            fallback_used=fallback_used,
             max_rows=_MAX_RESULT_ROWS,
         )
- 
+
         span = open_llm_span(
             lf_trace,
             name="verifier",
-            input_data={"prompt": prompt, "draft_answer": draft_answer, "sql": sql},
+            input_data={
+                "prompt": prompt,
+                "draft_answer": draft_answer,
+                "sql": sql,
+                "source_tables": source_tables,
+                "fallback_used": fallback_used,
+            },
             model=self.model,
-            metadata={"backend": self.backend},
+            metadata={"backend": self.backend, "db_uri": self.db_uri},
         )
- 
+
         try:
             if self.backend == "openai":
                 raw = _call_llm_openai(prompt, self.model, self.api_key)
             elif self.backend == "gemini":
                 raw = _call_llm_gemini(prompt, self.model, self.api_key)
+            elif self.backend == "anthropic":
+                raw = _call_llm_anthropic(prompt, self.model, self.api_key)
             else:
                 raise ValueError(f"Unknown backend: {self.backend!r}")
- 
+
             parsed, parse_ok = parse_strict(raw, required_keys=VERIFIER_REQUIRED_KEYS)
             if not parsed:
                 parsed = {
@@ -334,14 +444,14 @@ class VerifierAgent:
                     "reasoning": f"Parse error — defaulting to confirm. Raw: {raw[:120]}",
                 }
                 parse_ok = False
- 
+
             # Normalise verdict to known values.
             if parsed.get("verdict", "").lower() not in ("confirmed", "revised"):
                 parsed["verdict"] = "confirmed"
- 
+
             close_span(span, output=parsed)
             return prompt, parsed, not parse_ok, raw
- 
+
         except Exception as exc:
             fallback = {
                 "verdict": "confirmed",
