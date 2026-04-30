@@ -181,6 +181,8 @@ def build_sql_generator_prompt(
         plan_steps=steps_text,
         schema_block=schema_block,
         kpi_name=plan.get("kpi_name", "unknown"),
+        kpi_metric_logic=plan.get("kpi_metric_logic", ""),
+        match_confidence=plan.get("match_confidence", "")
     )
 
 

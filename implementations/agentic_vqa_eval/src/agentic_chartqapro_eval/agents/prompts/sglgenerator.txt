@@ -42,5 +42,6 @@ the JSON fields.
   "source_tables":      ["<table_name>", ...],
   "source_fields":      ["<table.field>", ...],
   "guardrail_triggered": false,
-  "fallback_used":      false
+  "fallback_used":      false,
+  "data_freshness":     "<ISO date or 'unknown'>"
 }}
