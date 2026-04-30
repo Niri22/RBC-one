@@ -340,7 +340,8 @@ class VerifierAgent:
             The original question sample (provides ``question`` and
             ``question_type``).
         plan : dict
-            The inspection plan from PlannerAgent (used for ``steps``).
+            The inspection plan from PlannerAgent (used for ``steps``,
+            ``expected_answer_type``, and ``hints``).
         sql_parsed : dict
             The ``parsed`` dict returned by ``SQLGeneratorAgent.run()``.
             Expected keys (SQL_REQUIRED_KEYS):
