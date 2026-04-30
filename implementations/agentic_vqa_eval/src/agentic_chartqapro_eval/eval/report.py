@@ -297,13 +297,16 @@ def _taxonomy_breakdown(taxonomy: list) -> str:
     total = len(taxonomy)
     colors = {
         "correct": "#00b894",
-        "axis_misread": "#e17055",
-        "legend_confusion": "#fd79a8",
-        "arithmetic_mistake": "#fdcb6e",
-        "hallucinated_element": "#d63031",
+        "wrong_table": "#e17055",
+        "wrong_aggregation": "#fd79a8",
+        "wrong_filter": "#fdcb6e",
+        "date_range_error": "#e84393",
+        "join_error": "#d63031",
+        "metric_definition_mismatch": "#6c5ce7",
+        "guardrail_blocked": "#0984e3",
+        "parse_failure": "#b2bec3",
         "unanswerable_failure": "#0984e3",
         "question_misunderstanding": "#6c5ce7",
-        "extraction_error": "#e84393",
         "other": "#b2bec3",
     }
 
@@ -320,6 +323,42 @@ def _taxonomy_breakdown(taxonomy: list) -> str:
     return html
 
 
+def _sql_pipeline_stats(rows: list) -> str:
+    """Build HTML table with SQL pipeline health metrics.
+
+    Covers citation rate, guardrail hit rate, SQL parse rate, and verifier
+    revision rate so operators can quickly spot systemic SQL generation issues.
+    """
+    n = len(rows)
+    if not n:
+        return "<p>No data.</p>"
+
+    cited = sum(1 for r in rows if r.get("citation_present"))
+    guardrail = sum(1 for r in rows if r.get("guardrail_triggered"))
+    sql_ok = sum(1 for r in rows if r.get("sql_parse_ok"))
+    revised = sum(1 for r in rows if r.get("verifier_verdict") == "revised")
+
+    stats = [
+        ("Citation present", cited, n, "#00b894"),
+        ("SQL parse OK", sql_ok, n, "#6c5ce7"),
+        ("Guardrail triggered", guardrail, n, "#e17055"),
+        ("Verifier revised", revised, n, "#fdcb6e"),
+    ]
+
+    out = '<div class="table-wrap"><table>'
+    out += "<tr><th>Metric</th><th>Count</th><th>Rate</th><th>Distribution</th></tr>"
+    for label, count, total, color in stats:
+        pct = count / total * 100 if total else 0
+        out += (
+            f"<tr><td>{label}</td>"
+            f"<td>{count}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f'<td style="width:240px">{_pct_bar(count, total, color)}</td></tr>'
+        )
+    out += "</table></div>"
+    return out
+
+
 def _sample_table(rows: list, taxonomy_by_id: dict, max_rows: int = 100) -> str:
     """Build HTML per-sample results table.
 
@@ -330,11 +369,15 @@ def _sample_table(rows: list, taxonomy_by_id: dict, max_rows: int = 100) -> str:
     has_ver = any(r.get("verifier_verdict") not in (None, "skipped", "") for r in rows)
     has_tax = bool(taxonomy_by_id)
     has_judge = any("judge_explanation_quality" in r for r in rows)
+    has_sql = any(r.get("sql_query") for r in rows)
 
     out = '<div class="table-wrap"><table>'
     headers = ["Sample ID", "Type", "Expected", "Predicted", "Accuracy"]
     if has_ver:
         headers.append("Verifier")
+    headers += ["Citation", "Guardrail"]
+    if has_sql:
+        headers.append("SQL Query")
     if has_tax:
         headers.append("Failure Type")
     if has_judge:
@@ -357,6 +400,17 @@ def _sample_table(rows: list, taxonomy_by_id: dict, max_rows: int = 100) -> str:
         )
         if has_ver:
             row += f"<td>{_verdict_badge(r.get('verifier_verdict', 'skipped'))}</td>"
+
+        cited = r.get("citation_present", False)
+        guardrail = r.get("guardrail_triggered", False)
+        row += f'<td><span class="badge {"badge-green" if cited else "badge-red"}">{"✓" if cited else "✗"}</span></td>'
+        row += f'<td><span class="badge {"badge-yellow" if guardrail else "badge-gray"}">{"hit" if guardrail else "—"}</span></td>'
+
+        if has_sql:
+            sql_q = html.escape(str(r.get("sql_query", "")))
+            tables = html.escape(", ".join(r.get("source_tables", [])) or "—")
+            row += f'<td class="mono truncate" title="{sql_q}" style="max-width:280px">{sql_q or "—"}<br><small style="color:#636e72">tables: {tables}</small></td>'
+
         if has_tax:
             ft = taxonomy_by_id.get(sid, {}).get("failure_type", "—")
             row += f"<td>{_failure_badge(ft) if ft != '—' else '—'}</td>"
@@ -400,28 +454,32 @@ def build_report(
     sections.append("<h2>Summary</h2>")
     sections.append(_summary_cards(metrics_rows, taxonomy_rows))
 
-    # 2. Accuracy by question type
+    # 2. SQL pipeline health
+    sections.append("<h2>SQL Pipeline Health</h2>")
+    sections.append(_sql_pipeline_stats(metrics_rows))
+
+    # 3. Accuracy by question type
     sections.append("<h2>Accuracy by Question Type</h2>")
     sections.append(_accuracy_by_qtype(metrics_rows))
 
-    # 3. Verifier stats (if used)
+    # 4. Verifier stats (if used)
     ver_html = _verifier_stats(metrics_rows)
     if ver_html:
         sections.append("<h2>Verifier (Pass 2.5) Statistics</h2>")
         sections.append(ver_html)
 
-    # 4. Judge scores (if available)
+    # 5. Judge scores (if available)
     judge_html = _judge_scores(metrics_rows)
     if judge_html:
         sections.append("<h2>LLM Judge Rubric Scores</h2>")
         sections.append(judge_html)
 
-    # 5. Failure taxonomy (if provided)
+    # 6. Failure taxonomy (if provided)
     if taxonomy_rows:
         sections.append("<h2>Failure Taxonomy (Pass 4)</h2>")
         sections.append(_taxonomy_breakdown(taxonomy_rows))
 
-    # 6. Per-sample table
+    # 7. Per-sample table
     sections.append(f"<h2>Per-Sample Results (first {min(len(metrics_rows), 100)})</h2>")
     sections.append(_sample_table(metrics_rows, taxonomy_by_id))
 

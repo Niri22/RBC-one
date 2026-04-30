@@ -118,7 +118,7 @@ The SQL Assistant replaces the original ChartQAPro vision pipeline (Plan → OCR
 | File | Role | Status |
 |------|------|--------|
 | [runner/run_generate_meps.py](src/agentic_chartqapro_eval/runner/run_generate_meps.py) | Main CLI entry point — orchestrates Planner → SchemaRetriever → SQLGenerator → Verifier, writes MEPs to disk. Supports `--config`, `--csv`, `--db_uri`, `--n`, `--workers`, `--no_verifier`, `--no_schema_retriever` | ✅ Updated |
-| [eval/eval_runner.py](src/agentic_chartqapro_eval/eval/eval_runner.py) | Alternative unified eval harness — similar orchestration to `run_generate_meps.py` | ⚠️ Partially duplicates runner; relationship to `run_generate_meps.py` unclear |
+| [eval/eval_runner.py](src/agentic_chartqapro_eval/eval/eval_runner.py) | Programmatic API — `run_sample`, `load_eval_samples`, `make_config` for notebooks/tests. Delegates all pipeline logic to `run_generate_meps.process_sample` | ✅ Updated |
 | [eval/db_setup.py](src/agentic_chartqapro_eval/eval/db_setup.py) | Loads UCI credit card CSV into SQLite for evaluation; returns SQLAlchemy URI | ✅ Updated |
 
 ### Stage 7: Evaluation Passes
@@ -168,25 +168,25 @@ These files implement the original vision-based pipeline and are **not imported 
 
 ### High Priority — Blocks Correct Evaluation
 
-- [ ] **[eval/eval_topk.py](src/agentic_chartqapro_eval/eval/eval_topk.py)** — Rewrite top-K pass for SQL pipeline. Current implementation re-queries a VLM with chart images. New version should re-run `SQLGeneratorAgent` K times (or with temperature > 0) and compute hit@1/hit@2/hit@3 against `expected_output`.
+- [x] **[eval/eval_topk.py](src/agentic_chartqapro_eval/eval/eval_topk.py)** — Rewritten for SQL pipeline. Re-runs SQLGeneratorAgent internals K times with a temperature ladder (0.2 → 0.4 → 0.6), executes SQL against the real DB via `NL2SQLTool`, deduplicates candidates, computes hit@1/hit@2/hit@3. CLI now requires `--db_uri` or `--csv` and supports all three backends.
 
-- [ ] **[eval/judge.py](src/agentic_chartqapro_eval/eval/judge.py)** — Update the 5-dimension judge rubric for SQL context. Dimensions like `hallucination_rate` and `faithfulness_alignment` still assume the judge is reading a chart description. Update prompts to evaluate SQL correctness, citation accuracy, and metric logic fidelity instead.
+- [x] **[eval/judge.py](src/agentic_chartqapro_eval/eval/judge.py)** — Rubric updated for SQL context with detailed per-dimension scoring criteria. Dimensions: `correctness`, `source_cited`, `reproducibility`, `no_hallucination`, `kpi_alignment`. Prompt now includes SQL query, source tables, source fields, and verifier verdict. Added `anthropic` backend support.
 
-- [ ] **[mep/writer.py](src/agentic_chartqapro_eval/mep/writer.py)** — Implement the stub builder functions (`init_mep`, `append_plan`, `append_schema`, `append_sql`, `append_verifier`, `close_mep`). These are called by the runner but currently no-ops, meaning in-flight MEPs are lost if the pipeline crashes mid-sample.
+- [x] **[mep/writer.py](src/agentic_chartqapro_eval/mep/writer.py)** — All builder stubs implemented: `init_mep` (creates MEP with start timestamp), `append_plan`, `append_schema`, `append_sql` (enforces citation requirement, logs error if `source_tables` empty), `append_verifier`, `close_mep` (sets end timestamp, computes per-step `elapsed_ms` from tool traces), `validate_citation`.
 
 ### Medium Priority — Correctness and Clean-Up
 
-- [ ] **[eval/error_taxonomy.py](src/agentic_chartqapro_eval/eval/error_taxonomy.py)** — Replace chart-QA failure categories (`axis_misread`, `legend_confusion`, `hallucinated_element`) with SQL-appropriate taxonomy: `wrong_table`, `wrong_aggregation`, `wrong_filter`, `date_range_error`, `join_error`, `metric_definition_mismatch`, `guardrail_blocked`, `parse_failure`.
+- [x] **[eval/error_taxonomy.py](src/agentic_chartqapro_eval/eval/error_taxonomy.py)** — Fully rewritten for SQL taxonomy. New categories: `wrong_table`, `wrong_aggregation`, `wrong_filter`, `date_range_error`, `join_error`, `metric_definition_mismatch`, `guardrail_blocked`, `parse_failure`, `unanswerable_failure`, `question_misunderstanding`, `other`. Guardrail-blocked and parse-failure samples short-circuit without an LLM call. All image/VLM code removed. Added `anthropic` backend.
 
-- [ ] **[eval/report.py](src/agentic_chartqapro_eval/eval/report.py)** — Update HTML report to display SQL-specific fields: generated SQL query, source tables, citation status, guardrail hit, verifier verdict. Remove chart image rendering and OCR output sections.
+- [x] **[eval/report.py](src/agentic_chartqapro_eval/eval/report.py)** — Updated HTML report for SQL pipeline. Added `_sql_pipeline_stats` section (citation rate, SQL parse rate, guardrail hit rate, verifier revision rate). Per-sample table now includes Citation ✓/✗ badge, Guardrail hit badge, truncated SQL query with source tables inline. Taxonomy colors updated to SQL failure categories.
 
-- [ ] **[eval/dashboard.py](src/agentic_chartqapro_eval/eval/dashboard.py)** — Update Streamlit dashboard to read `mep.sql_generator` and `mep.schema_retriever` instead of `mep.vision` and `mep.ocr`. Add SQL query syntax highlighting, table lineage view, and verifier reasoning panel.
+- [x] **[eval/dashboard.py](src/agentic_chartqapro_eval/eval/dashboard.py)** — Streamlit dashboard updated for SQL pipeline. Removed chart image and VisionAgent panels. Sample browser now shows SQL query with syntax highlighting (`st.code(..., language="sql")`), schema retriever table lineage (tables + columns), source tables/fields, citation and guardrail status badges, and verifier reasoning. Latency breakdown updated to `schema_retriever_ms` + `sql_generator_ms`.
 
-- [ ] **[eval/eval_runner.py](src/agentic_chartqapro_eval/eval/eval_runner.py)** — Clarify the relationship with `runner/run_generate_meps.py`. These two files overlap significantly. Either consolidate into one entry point, or clearly separate responsibilities (e.g., `run_generate_meps.py` for batch generation, `eval_runner.py` as a programmatic API).
+- [x] **[eval/eval_runner.py](src/agentic_chartqapro_eval/eval/eval_runner.py)** — Rewritten as a thin programmatic API. `run_generate_meps.py` is now the canonical CLI batch runner. `eval_runner.py` exposes `run_sample`, `load_eval_samples`, and `make_config` for notebooks/tests that need to drive the pipeline without the CLI. All pipeline logic delegates to `run_generate_meps.process_sample` — no duplicated code.
 
-- [ ] **[langfuse_integration/prompts.py](src/agentic_chartqapro_eval/langfuse_integration/prompts.py)** — Register the three active SQL prompts (`planner.txt`, `sql_retrieval.txt`, `sglgenerator.txt`) in Langfuse Prompt Management. Remove or deprecate the `vision.txt` registration.
+- [x] **[langfuse_integration/prompts.py](src/agentic_chartqapro_eval/langfuse_integration/prompts.py)** — Updated to register the three active SQL prompts (`planner.txt`, `sql_retrieval.txt`, `sglgenerator.txt`) under names `sql_assistant_planner`, `sql_assistant_schema_retriever`, `sql_assistant_sql_generator`. Removed `vision.txt` registration entirely.
 
-- [ ] **[langfuse_integration/dataset.py](src/agentic_chartqapro_eval/langfuse_integration/dataset.py)** — Point dataset registration at `eval_samples.json` instead of the ChartQAPro HuggingFace dataset.
+- [x] **[langfuse_integration/dataset.py](src/agentic_chartqapro_eval/langfuse_integration/dataset.py)** — Rewritten to load from `eval_samples.json` (flat JSON) instead of ChartQAPro HuggingFace dataset. Registers `sample_id`, `question`, `question_type`, `kpi_name`, and `expected_output` per item.
 
 ### Low Priority — Housekeeping
 
@@ -216,19 +216,19 @@ These files implement the original vision-based pipeline and are **not imported 
 | SQLGeneratorAgent | `sqlgenerator_agent.py`, `prompts/sglgenerator.txt` | ✅ |
 | VerifierAgent | `verifier_agent.py` | ✅ |
 | MEP schema | `mep/schema.py` | ✅ |
-| MEP writer / builder | `mep/writer.py` | ⚠️ Stubs not implemented |
+| MEP writer / builder | `mep/writer.py` | ✅ |
 | Pipeline runner | `runner/run_generate_meps.py` | ✅ |
 | eval_outputs (Pass 1) | `eval/eval_outputs.py` | ✅ |
 | eval_traces (Pass 2) | `eval/eval_traces.py` | ✅ |
-| eval_topk (Pass 3) | `eval/eval_topk.py` | ⚠️ Needs rewrite |
-| LLM judge | `eval/judge.py` | ⚠️ Rubric needs update |
-| error_taxonomy (Pass 4) | `eval/error_taxonomy.py` | ⚠️ Needs SQL taxonomy |
+| eval_topk (Pass 3) | `eval/eval_topk.py` | ✅ |
+| LLM judge | `eval/judge.py` | ✅ |
+| error_taxonomy (Pass 4) | `eval/error_taxonomy.py` | ✅ |
 | summarize.py | `eval/summarize.py` | ✅ |
-| HTML report | `eval/report.py` | ⚠️ Needs update |
-| Dashboard | `eval/dashboard.py` | ⚠️ Needs update |
+| HTML report | `eval/report.py` | ✅ |
+| Dashboard | `eval/dashboard.py` | ✅ |
 | DB setup | `eval/db_setup.py` | ✅ |
 | Langfuse tracing | `langfuse_integration/tracing.py`, `client.py` | ✅ |
-| Langfuse prompts | `langfuse_integration/prompts.py` | ⚠️ Still registers vision.txt |
-| Langfuse dataset | `langfuse_integration/dataset.py` | ⚠️ May point to ChartQAPro |
+| Langfuse prompts | `langfuse_integration/prompts.py` | ✅ |
+| Langfuse dataset | `langfuse_integration/dataset.py` | ✅ |
 | Shared utils | `utils/json_strict.py`, `utils/timing.py` | ✅ |
 | **Legacy (unused)** | `vision_agent.py`, `vision_qa_tool.py`, `ocr_reader_tool.py`, `prompts/vision.txt`, `chartqapro_loader.py`, `utils/hashing.py` | 🟡 Not used — clean up |

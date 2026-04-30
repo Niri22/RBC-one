@@ -356,7 +356,6 @@ with tab_browser:
 
     sample = mep.get("sample", {})
     plan = mep.get("plan", {}).get("parsed", {})
-    vision = mep.get("vision", {}).get("parsed", {})
     verifier = (mep.get("verifier") or {}).get("parsed", {})
     timestamps = mep.get("timestamps", {})
     errors = mep.get("errors", [])
@@ -364,26 +363,20 @@ with tab_browser:
     m_row = metrics_by_id.get(selected_id, {})
     t_row = tax_by_id.get(selected_id, {})
 
+    sql_gen = mep.get("sql_generator", {}) or {}
+    sql_parsed = sql_gen.get("parsed", {}) or {}
+    schema_ret = mep.get("schema_retriever", {}) or {}
+
     col_left, col_right = st.columns([1, 1])
 
     with col_left:
-        # Chart image
-        img_path = sample.get("image_ref", {}).get("path", "")
-        if img_path and Path(img_path).exists() and HAS_PIL:
-            st.image(img_path, caption=f"Chart: {selected_id}", use_container_width=True)
-        elif img_path:
-            st.warning(f"Image not found: {img_path}")
-        else:
-            st.info("No image path in MEP.")
-
-    with col_right:
         # Sample metadata
         st.markdown(f"**Question:** {sample.get('question', '—')}")
         st.markdown(
-            f"**Type:** `{sample.get('question_type', '—')}` &nbsp;|&nbsp; **Expected:** `{sample.get('expected_output', '—')}`"
+            f"**Type:** `{sample.get('question_type', '—')}` &nbsp;|&nbsp; "
+            f"**Expected:** `{sample.get('expected_output', '—')}`"
         )
 
-        # Accuracy badge
         acc = m_row.get("answer_accuracy", None)
         if acc is not None:
             color = "green" if acc >= 1.0 else "orange" if acc >= 0.5 else "red"
@@ -393,20 +386,51 @@ with tab_browser:
 
         # Planner steps
         steps = plan.get("steps", [])
-        with st.expander(f"Planner steps ({len(steps)})", expanded=True):
+        with st.expander(f"Planner ({len(steps)} steps)", expanded=True):
             for i, s in enumerate(steps, 1):
                 st.markdown(f"{i}. {s}")
 
-        # Vision agent
-        with st.expander("VisionAgent output", expanded=True):
-            st.markdown(f"**Draft answer:** `{vision.get('answer', '—')}`")
-            st.markdown(f"**Explanation:** {vision.get('explanation', '—')}")
+        # Schema retriever — table lineage
+        if schema_ret:
+            tables_found = schema_ret.get("tables_found", [])
+            with st.expander(f"Schema Retriever — {len(tables_found)} table(s)", expanded=False):
+                for t in tables_found:
+                    st.markdown(f"- **{t.get('table_name', '?')}**: {', '.join(t.get('columns', []))}")
+                if schema_ret.get("raw_text"):
+                    st.text_area("Raw schema context", schema_ret["raw_text"], height=120)
+
+    with col_right:
+        # SQL Generator output
+        sql_query = sql_gen.get("sql", "") or sql_parsed.get("sql", "")
+        sql_answer = sql_parsed.get("answer", "—")
+        source_tables = sql_gen.get("source_tables", [])
+        source_fields = sql_gen.get("source_fields", [])
+        guardrail = sql_gen.get("guardrail_triggered", False)
+        citation_ok = bool(source_tables)
+
+        with st.expander("SQL Generator", expanded=True):
+            if guardrail:
+                st.error("Guardrail triggered — query was blocked")
+            col_a, col_b = st.columns(2)
+            col_a.metric("Answer", sql_answer)
+            col_a.markdown(
+                f"Citation: {'✅' if citation_ok else '❌'}  "
+                f"Guardrail: {'🚫' if guardrail else '—'}"
+            )
+            if source_tables:
+                col_b.markdown(f"**Tables:** {', '.join(source_tables)}")
+            if source_fields:
+                col_b.markdown(f"**Fields:** {', '.join(source_fields)}")
+            if sql_query:
+                st.code(sql_query, language="sql")
+            else:
+                st.info("No SQL generated.")
 
         # Verifier
         if verifier:
             verdict = verifier.get("verdict", "—")
             v_color = "green" if verdict == "confirmed" else "orange" if verdict == "revised" else "gray"
-            with st.expander(f"VerifierAgent — :{v_color}[{verdict}]", expanded=True):
+            with st.expander(f"Verifier — :{v_color}[{verdict}]", expanded=True):
                 st.markdown(f"**Final answer:** `{verifier.get('answer', '—')}`")
                 st.markdown(f"**Reasoning:** {verifier.get('reasoning', '—')}")
 
@@ -419,16 +443,16 @@ with tab_browser:
 
         # Latency
         if timestamps:
-            total_ms = sum(
-                [
-                    timestamps.get("planner_ms", 0),
-                    timestamps.get("vision_ms", 0),
-                    timestamps.get("verifier_ms", 0),
-                ]
-            )
+            total_ms = sum([
+                timestamps.get("planner_ms", 0),
+                timestamps.get("schema_retriever_ms", 0),
+                timestamps.get("sql_generator_ms", 0),
+                timestamps.get("verifier_ms", 0),
+            ])
             st.caption(
                 f"Latency — planner: {timestamps.get('planner_ms', 0):.0f}ms  "
-                f"vision: {timestamps.get('vision_ms', 0):.0f}ms  "
+                f"schema: {timestamps.get('schema_retriever_ms', 0):.0f}ms  "
+                f"sql_gen: {timestamps.get('sql_generator_ms', 0):.0f}ms  "
                 f"verifier: {timestamps.get('verifier_ms', 0):.0f}ms  "
                 f"**total: {total_ms / 1000:.2f}s**"
             )

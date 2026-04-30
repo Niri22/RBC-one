@@ -1,86 +1,86 @@
-"""Register ChartQAPro samples as a Langfuse Dataset.
+"""Register SQL Assistant eval samples as a Langfuse Dataset.
+
+Reads from eval_samples.json (the flat JSON eval set) and uploads each sample
+as a Langfuse Dataset item so experiments can be linked to specific dataset
+versions in the Langfuse UI.
 
 Usage:
-    python -m agentic_chartqapro_eval.langfuse_integration.dataset \
-        --split test --n 25
+    uv run -m agentic_chartqapro_eval.langfuse_integration.dataset \
+        --samples src/agentic_chartqapro_eval/eval/eval_samples.json \
+        --name sql_assistant_eval
 """
 
 import argparse
-from typing import Optional
+import json
+from pathlib import Path
+from typing import List, Optional
 
-from ..datasets.chartqapro_loader import load_chartqapro
 from .client import get_client
 
 
 def register_dataset(
-    samples,
-    dataset_name: str = "ChartQAPro",
-    split: str = "test",
+    samples: List[dict],
+    dataset_name: str = "sql_assistant_eval",
 ) -> Optional[str]:
-    """
-    Upload a collection of samples as a Langfuse Dataset.
-
-    Allows for versioned dataset management and evaluation in the Langfuse UI.
+    """Upload eval_samples.json entries as a Langfuse Dataset.
 
     Parameters
     ----------
-    samples : list of PerceivedSample
-        The data samples to register.
-    dataset_name : str, default 'ChartQAPro'
-        The base name for the dataset.
-    split : str, default 'test'
-        The split identifier (e.g., 'train', 'val').
+    samples : list of dict
+        Dicts with keys: sample_id, question, question_type, expected_output,
+        kpi_name, metadata.
+    dataset_name : str
+        Name of the dataset in Langfuse.
 
     Returns
     -------
     str or None
-        The name of the created dataset if successful, else None.
+        The dataset name if successful, else None.
     """
     client = get_client()
     if client is None:
+        print("[langfuse] No client — skipping dataset registration")
         return None
 
-    name = f"{dataset_name}_{split}"
     try:
-        client.create_dataset(name=name)
-        [
+        client.create_dataset(name=dataset_name)
+        for s in samples:
             client.create_dataset_item(
-                dataset_name=name,
+                dataset_name=dataset_name,
                 input={
-                    "source_id": s.sample_id,  # stored as data field; Langfuse auto-generates UUID v7 id
-                    "question": s.question,
-                    "question_type": s.question_type.value,
-                    "image_path": s.image_path or "",
-                    "choices": s.choices or [],
+                    "source_id": s.get("sample_id", ""),
+                    "question": s.get("question", ""),
+                    "question_type": s.get("question_type", "standard"),
+                    "kpi_name": s.get("kpi_name", ""),
+                    "metadata": s.get("metadata", {}),
                 },
-                expected_output=s.expected_output,
+                expected_output=s.get("expected_output", ""),
             )
-            for s in samples
-        ]
-        print(f"[langfuse] Registered {len(samples)} samples → dataset '{name}'")
-        return name
+        print(f"[langfuse] Registered {len(samples)} samples → dataset '{dataset_name}'")
+        return dataset_name
     except Exception as exc:
         print(f"[langfuse] Dataset registration failed: {exc}")
         return None
 
 
 def main() -> None:
-    """
-    Command-line interface for registering ChartQAPro datasets.
-
-    Returns
-    -------
-    None
-    """
-    parser = argparse.ArgumentParser(description="Register ChartQAPro samples as Langfuse dataset")
-    parser.add_argument("--split", default="test")
-    parser.add_argument("--n", type=int, default=25)
-    parser.add_argument("--image_dir", default="data/chartqapro_images")
-    parser.add_argument("--cache_dir", default=None)
+    parser = argparse.ArgumentParser(description="Register SQL Assistant eval samples as Langfuse dataset")
+    parser.add_argument(
+        "--samples",
+        default=str(Path(__file__).parents[1] / "eval" / "eval_samples.json"),
+        help="Path to eval_samples.json",
+    )
+    parser.add_argument("--name", default="sql_assistant_eval", help="Dataset name in Langfuse")
+    parser.add_argument("--n", type=int, default=None, help="Limit to first N samples")
     args = parser.parse_args()
 
-    samples = load_chartqapro(split=args.split, n=args.n, image_dir=args.image_dir, cache_dir=args.cache_dir)
-    register_dataset(samples, split=args.split)
+    with open(args.samples) as f:
+        samples = json.load(f)
+
+    if args.n is not None:
+        samples = samples[: args.n]
+
+    register_dataset(samples, dataset_name=args.name)
 
 
 if __name__ == "__main__":
