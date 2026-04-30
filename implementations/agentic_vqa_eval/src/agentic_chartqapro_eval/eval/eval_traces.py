@@ -51,7 +51,9 @@ def evaluate_trace(mep: dict) -> dict:
     timestamps = mep.get("timestamps", {})
     sql = mep.get("sql_generator", {})
     plan = mep.get("plan", {})
-    schema = mep.get("schema_retriever", {})
+    schema = mep.get("schema_retriever") or {}
+    if not isinstance(schema, dict):
+        schema = {}
     sample = mep.get("sample", {})
     config = mep.get("config", {})
 

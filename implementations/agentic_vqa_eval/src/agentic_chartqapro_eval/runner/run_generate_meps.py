@@ -316,8 +316,19 @@ def process_sample(
         if mep_config.schema_retriever_enabled and plan_parsed:
             try:
                 with timed() as st:
-                    schema_result = schema_retriever.run(sample.question, plan_parsed)
+                    _sr_prompt, _sr_parsed, schema_parse_error, _sr_raw = schema_retriever.run(
+                        sample.question, plan_parsed
+                    )
                 schema_ms = st.elapsed_ms
+                if _sr_parsed:
+                    schema_result = MEPSchemaRetriever(
+                        kpi_name=_sr_parsed.get("kpi_name", ""),
+                        source_tables=_sr_parsed.get("source_tables", []),
+                        source_fields=_sr_parsed.get("source_fields", []),
+                        join_keys=_sr_parsed.get("join_keys", []),
+                        data_freshness=_sr_parsed.get("data_freshness", ""),
+                        parse_error=schema_parse_error,
+                    )
             except Exception as exc:
                 errors.append(f"schema_retriever_error: {exc}")
                 schema_parse_error = True
@@ -381,11 +392,11 @@ def process_sample(
                         verifier_parsed,
                         verifier_parse_error,
                         verifier_raw,
-                        verifier_verdict,
                     ) = verifier_agent.run(
                         sample, plan_parsed, sql_parsed, lf_trace=lf_trace
                     )
                 verifier_ms = vrt.elapsed_ms
+                verifier_verdict = verifier_parsed.get("verdict", "confirmed")
             except Exception as exc:
                 errors.append(f"verifier_error: {exc}")
                 verifier_parsed = {
