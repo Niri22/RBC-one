@@ -26,8 +26,11 @@ def setup_db(csv_path: str, db_path: str = "rbc_metrics.db") -> str:
     """
     print(f"Loading {csv_path} into {db_path}...")
 
-    df = pd.read_csv(csv_path, header=1)  # header=1 skips the
-                                           # UCI dataset's double-header row
+    p = Path(csv_path)
+    if p.suffix.lower() in (".xls", ".xlsx"):
+        df = pd.read_excel(csv_path, header=1)  # header=1 skips the UCI double-header row
+    else:
+        df = pd.read_csv(csv_path, header=1)
 
     # Rename the target column to something readable
     df = df.rename(columns={

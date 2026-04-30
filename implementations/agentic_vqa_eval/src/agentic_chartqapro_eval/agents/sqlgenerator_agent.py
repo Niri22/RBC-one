@@ -19,8 +19,8 @@ from ..mep.schema import MEPSchemaRetriever
 from ..utils.json_strict import parse_strict
 
 
-SQL_GENERATOR_PROMPT_PATH = Path(__file__).parent / "prompts" / "sql_generator.txt"
-
+SQL_GENERATOR_PROMPT_PATH = Path(__file__).parent / "prompts" / "sglgenerator.txt"
+# /home/coder/interpretability-llms-agents/implementations/agentic_vqa_eval/src/agentic_chartqapro_eval/agents/prompts/sglgenerator.txt
 SQL_REQUIRED_KEYS = [
     "sql",
     "answer",
@@ -86,6 +86,33 @@ def _apply_guardrails(sql: str, allowed_tables: List[str]) -> Tuple[bool, str]:
 
     return False, ""
 
+def _unwrap_schema(schema):
+    """
+    Normalize schema input.
+
+    Expected schema object should have:
+      - source_tables
+      - source_fields
+      - join_keys
+      - data_freshness
+
+    If schema arrives as a tuple/list, find the item that looks like the schema object.
+    If schema is a string or invalid object, return None.
+    """
+    if schema is None:
+        return None
+
+    if hasattr(schema, "source_tables"):
+        return schema
+
+    if isinstance(schema, (tuple, list)):
+        for item in schema:
+            if hasattr(item, "source_tables"):
+                return item
+        return None
+
+    return None
+
 
 def build_sql_generator_prompt(
     sample: PerceivedSample,
@@ -111,6 +138,7 @@ def build_sql_generator_prompt(
         Rendered prompt string.
     """
     template = _load_template()
+    schema = _unwrap_schema(schema)
 
     steps_text = "\n".join(
         f"  {i + 1}. {s}" for i, s in enumerate(plan.get("steps", []))
@@ -161,6 +189,29 @@ def _build_llm(backend: str, model: str, api_key: Optional[str]) -> LLM:
     raise ValueError(f"Unknown SQL generator backend: {backend!r}")
 
 
+def _patch_nl2sql_for_sqlite() -> None:
+    """Replace NL2SQLTool's schema introspection methods with SQLite-compatible ones.
+
+    The default implementation queries information_schema.tables which only exists
+    in PostgreSQL/MySQL. SQLite exposes schema via sqlite_master instead.
+    """
+    from crewai_tools.tools.nl2sql.nl2sql_tool import NL2SQLTool as _T
+
+    def _fetch_tables(self):  # type: ignore[override]
+        return self.execute_sql(
+            "SELECT name AS table_name FROM sqlite_master WHERE type='table';"
+        )
+
+    def _fetch_columns(self, table_name: str):  # type: ignore[override]
+        rows = self.execute_sql(f"PRAGMA table_info({table_name});")
+        if isinstance(rows, list):
+            return [{"column_name": r["name"], "data_type": r["type"]} for r in rows]
+        return rows
+
+    _T._fetch_available_tables = _fetch_tables  # type: ignore[method-assign]
+    _T._fetch_all_available_columns = _fetch_columns  # type: ignore[method-assign]
+
+
 class SQLGeneratorAgent:
     """
     CrewAI agent that converts a planner JSON plan into an executable SQL query.
@@ -196,7 +247,8 @@ class SQLGeneratorAgent:
         self.model = model
         self.api_key = api_key
         self._llm = _build_llm(backend, model, api_key)
-        # NL2SQLTool is read-only by default — safe for production
+        # Patch NL2SQLTool for SQLite compatibility — information_schema is PostgreSQL-only.
+        _patch_nl2sql_for_sqlite()
         self._nl2sql = NL2SQLTool(db_uri=db_uri)
 
     def run(
@@ -232,6 +284,7 @@ class SQLGeneratorAgent:
         raw_text : str
             Raw LLM response.
         """
+        schema = _unwrap_schema(schema)
         prompt = build_sql_generator_prompt(sample, plan, schema)
         allowed_tables = schema.source_tables if schema else []
 

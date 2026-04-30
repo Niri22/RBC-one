@@ -31,6 +31,9 @@ class QuestionType(str, Enum):
     CONVERSATIONAL = "conversational"
     HYPOTHETICAL = "hypothetical"
     UNANSWERABLE = "unanswerable"
+    # SQL Assistant pipeline question types
+    EXEC = "exec"
+    ANALYST = "analyst"
 
 
 @dataclass

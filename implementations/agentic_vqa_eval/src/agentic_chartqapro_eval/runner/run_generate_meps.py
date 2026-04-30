@@ -72,13 +72,13 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 
 BACKEND_CONFIGS: dict = {
-    "anthropic_claude": {
-        "planner_backend": "anthropic",
-        "planner_model":   "claude-sonnet-4-6",
-        "sql_backend":     "anthropic",
-        "sql_model":       "claude-sonnet-4-6",
-        "judge_backend":   "anthropic",
-    },
+    # "anthropic_claude": {
+    #     "planner_backend": "anthropic",
+    #     "planner_model":   "claude-sonnet-4-6",
+    #     "sql_backend":     "anthropic",
+    #     "sql_model":       "claude-sonnet-4-6",
+    #     "judge_backend":   "anthropic",
+    # },
     "openai_openai": {
         "planner_backend": "openai",
         "planner_model":   "gpt-4o",
@@ -151,10 +151,11 @@ def load_eval_samples(path: str) -> list[dict]:
  
 def _sample_dict_to_perceived(s: dict) -> PerceivedSample:
     """Convert a flat eval sample dict to a PerceivedSample for agent compatibility."""
+    from ..datasets.perceived_sample import QuestionType
     return PerceivedSample(
         sample_id=s["sample_id"],
         question=s["question"],
-        question_type=s["question_type"],
+        question_type=QuestionType(s["question_type"]),
         expected_output=s["expected_output"],
         metadata={
             **s.get("metadata", {}),
@@ -315,7 +316,7 @@ def process_sample(
         if mep_config.schema_retriever_enabled and plan_parsed:
             try:
                 with timed() as st:
-                    schema_result = schema_retriever.run(plan_parsed)
+                    schema_result = schema_retriever.run(sample.question, plan_parsed)
                 schema_ms = st.elapsed_ms
             except Exception as exc:
                 errors.append(f"schema_retriever_error: {exc}")
