@@ -35,21 +35,26 @@ VERIFIER_REQUIRED_KEYS = ["verdict", "answer", "reasoning"]
 _MAX_RESULT_ROWS = 20
 
 _VERIFIER_PROMPT = """\
-You are a critical senior data quality and QA verifier. A SQL generator agent has already attempted to answer
-the question below. Your job: look at the SQL code and result carefully and audit the work.
+You are a senior SQL and data quality auditor. A SQL generator agent has already attempted to answer
+the question below by writing and executing SQL. Your job is to audit that SQL and decide whether the
+draft answer is correct.
 
-Question         : {question}
-Question Type    : {question_type}
+Question           : {question}
+Question Type      : {question_type}
+Expected Answer Type: {expected_answer_type}
 
 Inspection plan the agent was supposed to follow:
 {plan_steps}
 
+Hints (from planner):
+{hints}
+
 SQLGeneratorAgent's Draft SQL:
 {sql}
- 
+
 SQL Execution Result (first {max_rows} rows):
 {sql_result}
- 
+
 Draft Answer     : {draft_answer}
 Draft Explanation: {draft_explanation}
 Source Tables    : {source_tables}
@@ -57,20 +62,28 @@ Source Fields    : {source_fields}
 Data Freshness   : {data_freshness}
 Fallback Used    : {fallback_used}
 
-Examine the SQL code. Then decide:
-  CONFIRM — the draft answer is correct (output the same answer unchanged)
-  REVISE  — you can see a clear, specific error; output the corrected answer
+AUDIT CHECKLIST — work through each point before deciding:
+1. Aggregation function: Is AVG/SUM/COUNT the correct one for this KPI? For a rate on a 0/1 column, AVG is correct; COUNT(*) is wrong.
+2. CAST / numeric scale: If AVG is applied to an integer 0/1 column, confirm CAST(...AS FLOAT) or CAST(...AS REAL) is present. A bare AVG on INTEGER in SQLite returns an integer.
+3. Percentage format: If the expected answer type is a percentage (e.g. "22.12%"), confirm the SQL multiplies by 100 and rounds. If not, the answer will be off by 100×.
+4. Filter values: Verify WHERE clause uses the correct coded values for categorical columns (e.g. SEX: 1=male, 2=female; EDUCATION: 1=grad, 2=university, 3=high school, 4=other; MARRIAGE: 1=married, 2=single, 3=other). A filter like SEX=0 returns 0 rows.
+5. SQL result vs draft answer: Does the first row of the SQL result match the draft answer (within rounding)? If the result says 22.12 but the answer says "0.2212", that is a scale error.
+6. Empty result: If the SQL result says "(query returned no rows)" but the draft answer is a number, that is a definite error — REVISE.
+7. MCQ alignment: For multiple-choice questions, the answer must be exactly one of the stated choices.
+
+Decide:
+  CONFIRM — the draft answer is consistent with the SQL result and the audit checklist passes
+  REVISE  — you found a concrete, specific error above; output the corrected answer derived from the SQL result
 
 Rules:
-- Only REVISE when you are confident you can point to a concrete error in the code
-- If uncertain, CONFIRM — do not second-guess without confirming KPI definition 
-- For MCQ questions: the answer must be one of the stated choices
-- If the answer is truly unanswerable based on the data and KPI definition, say exactly "UNANSWERABLE"
-- Keep answers concise — numbers, short phrases, or single words where appropriate
-- Review the answer against baseline value
+- REVISE only when you can point to a specific item in the audit checklist that fails
+- If the SQL result contradicts the draft answer (different number, wrong scale, 0 rows), always REVISE
+- If the answer is truly unanswerable from the available data, output exactly "UNANSWERABLE"
+- Keep answers concise — numbers (with % if a rate), short phrases, or single words where appropriate
+- Do not invent data not present in the SQL result
 
 Output ONLY JSON, no markdown, no extra text:
-{{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence summerize the SQL query and calculation steps>"}}"""
+{{"verdict": "confirmed" | "revised", "answer": "<final answer>", "reasoning": "<one sentence: what the SQL computes and whether/why you changed the answer>"}}"""
 
 
 
@@ -180,7 +193,7 @@ def _call_llm_openai(prompt: str, model: str, api_key: Optional[str]) -> str:
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        max_completion_tokens=256,
+        max_completion_tokens=512,
         temperature=0,
     )
     return response.choices[0].message.content or ""
@@ -210,7 +223,7 @@ def _call_llm_gemini(prompt: str, model: str, api_key: Optional[str]) -> str:
     response = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=genai.types.GenerateContentConfig(temperature=0, max_output_tokens=256),
+        config=genai.types.GenerateContentConfig(temperature=0, max_output_tokens=512),
     )
     return response.text or ""
 
@@ -240,7 +253,7 @@ def _call_llm_anthropic(prompt: str, model: str, api_key: Optional[str]) -> str:
     )
     message = client.messages.create(
         model=model,
-        max_tokens=256,
+        max_tokens=512,
         temperature=0,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -327,7 +340,8 @@ class VerifierAgent:
             The original question sample (provides ``question`` and
             ``question_type``).
         plan : dict
-            The inspection plan from PlannerAgent (used for ``steps``).
+            The inspection plan from PlannerAgent (used for ``steps``,
+            ``expected_answer_type``, and ``hints``).
         sql_parsed : dict
             The ``parsed`` dict returned by ``SQLGeneratorAgent.run()``.
             Expected keys (SQL_REQUIRED_KEYS):
@@ -380,11 +394,16 @@ class VerifierAgent:
             close_span(span, output=short_circuit)
             return "", short_circuit, False, ""
 
-        # ── Plan steps ───────────────────────────────────────────────────────
+        # ── Plan steps, expected answer type, and hints ──────────────────────
         plan_steps = plan.get("steps", [])
         steps_text = (
             "\n".join(f"  {i + 1}. {s}" for i, s in enumerate(plan_steps))
             or "  (none)"
+        )
+        expected_answer_type = plan.get("expected_answer_type", "(unknown)")
+        hints = plan.get("hints", [])
+        hints_text = (
+            "\n".join(f"  - {h}" for h in hints) if hints else "  (none)"
         )
 
         question_type = getattr(
@@ -400,7 +419,9 @@ class VerifierAgent:
         prompt = _VERIFIER_PROMPT.format(
             question=sample.question,
             question_type=question_type,
+            expected_answer_type=expected_answer_type,
             plan_steps=steps_text,
+            hints=hints_text,
             sql=textwrap.indent(sql or "(no SQL provided)", "  "),
             sql_result=textwrap.indent(sql_result, "  "),
             draft_answer=draft_answer,
